@@ -1,0 +1,38 @@
+{
+	"name": "webaudiofont",
+	"version": "3.0.04",
+	"description": "Soundfonts for web. About of 2000 musical instruments. GM MIDI compatible.",
+	"keywords": [
+		"audio",
+		"guitar",
+		"piano",
+		"music",
+		"drums",
+		"beat",
+		"sound",
+		"synthesizer",
+		"wavetable",
+		"midi",
+		"soundfont",
+		"synth",
+		"mixer",
+		"distortion",
+		"microtonal",
+		"kontakt"
+	],
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/surikov/webaudiofont"
+	},
+	"license": "GPL-3.0-or-later",
+	"main": "npm/dist/WebAudioFontPlayer.js",
+	"devDependencies": {},
+	"scripts": {
+		"test": "echo test",
+		"ts": "tsc --build npm/src/tsconfig.json",
+		"prepublish": "npm run ts"
+	},
+	"dependencies": {
+		"typedoc": "^0.22.14"
+	}
+}
