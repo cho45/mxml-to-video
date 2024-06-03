@@ -110,7 +110,7 @@ Vue.createApp({
 
 			const { player, audioContext, channelMaster } = this;
 			channelMaster.output.connect(audioContext.destination);
-			channelMaster.output.gain.value = 0.5;
+			channelMaster.output.gain.value = 0.3;
 		}
 	},
 
@@ -183,7 +183,7 @@ Vue.createApp({
 			const cursor = osmd.cursor;
 			if (cursor.Iterator.EndReached) return;
 			cursor.next();
-			return this.updateFretboard();
+			this.updateFretboard();
 		},
 
 		prev() {
@@ -191,22 +191,17 @@ Vue.createApp({
 			const cursor = osmd.cursor;
 			if (cursor.Iterator.FrontReached) return;
 			cursor.previous();
-			return this.updateFretboard();
+			this.updateFretboard();
 		},
 
 		updateFretboard() {
 			const { osmd } = this;
 			const cursor = osmd.cursor;
-			cursor.next();
-			console.log(Object.assign({}, cursor.Iterator));
-			// const ts = Object.assign({}, cursor.Iterator.CurrentEnrolledTimestamp);
-			const ts = Object.assign({}, cursor.Iterator.currentTimeStamp);
-			cursor.previous();
 
 			{
 				const i = cursor.Iterator.currentMeasureIndex;
 				const measure = osmd.GraphicSheet.MeasureList[i][0];
-				if (!measure) return ts;
+				if (!measure) return;
 				if (i % 2 === 0) {
 					const pos = measure.PositionAndShape.absolutePosition.x * osmd.zoom * 10;
 					this.$refs.osmdContainer.style.left = -pos + 'px';
@@ -216,13 +211,18 @@ Vue.createApp({
 			}
 			
 			if (!cursor.Iterator.currentVoiceEntries.length) {
-				return ts;
+				return;
 			}
 
 			const actives = [];
-			for (let note of cursor.Iterator.CurrentVoiceEntries[1].Notes) {
-				// console.log(note.length.realValue);
-				actives.push({ string: note.StringNumberTab, fret: note.FretNumber });
+			for (let entry of cursor.Iterator.CurrentVoiceEntries) {
+				if (entry.parentSourceStaffEntry.parentStaff.isTab) {
+					for (let note of entry.Notes) {
+						// console.log(note.length.realValue);
+						if (note.isRest()) continue;
+						actives.push({ string: note.StringNumberTab, fret: note.FretNumber });
+					}
+				}
 			}
 
 			const measureNotes = this.getAllPositionForMeasure(cursor.Iterator.CurrentMeasure);
@@ -233,14 +233,101 @@ Vue.createApp({
 				active: actives.some(active => active.string === note.StringNumberTab && active.fret === note.FretNumber),
 			}));
 			this.fretboard.render();
-
-			console.log(ts);
-			return ts;
 		},
 
 
 		async play() {
 			this.playing = true;
+
+			const { osmd } = this;
+			const cursor = osmd.cursor;
+			cursor.reset();
+
+			const wholeNoteLength = 60 / this.bpm * 4;
+
+			const steps = [];
+			while (!cursor.Iterator.EndReached) {
+				let step = {
+					ts : cursor.Iterator.currentTimeStamp.realValue * wholeNoteLength,
+					notes: [],
+				};
+				const currentVoiceEntries =  cursor.Iterator.CurrentVoiceEntries;
+				if (currentVoiceEntries && currentVoiceEntries.length) {
+					for (let entry of currentVoiceEntries) {
+						if (!entry.ParentSourceStaffEntry.ParentStaff.isTab) continue;
+
+						for (let note of entry.Notes) {
+							if (note.isRest()) continue;
+							let duration = note.Length.realValue * wholeNoteLength;
+							if (note.NoteTie) {
+								if (note.NoteTie.StartNote === note) {
+									duration += note.NoteTie.Notes[1].Length.realValue * wholeNoteLength;
+								} else {
+									continue;
+								}
+							}
+
+							let volume = note.ParentVoiceEntry.ParentVoice.Volume;
+							const string = note.StringNumberTab;
+							const fret = note.FretNumber;
+							step.notes.push({
+								note, duration, volume, string, fret,
+								fretboardNote: fretboardNotes[string - 1][fret],
+							});
+						}
+					}
+				}
+				steps.push(step);
+				cursor.next();
+			}
+			console.log(steps);
+			cursor.reset();
+
+			const voice = await this.loadVoice('https://surikov.github.io/webaudiofontdata/sound/0270_Gibson_Les_Paul_sf2_file.js', '_tone_0270_Gibson_Les_Paul_sf2_file');
+			const { player, audioContext, channelMaster } = this;
+			await audioContext.resume();
+
+			let startTime = audioContext.currentTime + 0.1;
+
+			const func = () => {
+				if (!this.playing) return;
+				const step = steps.shift();
+				if (!step) {
+					this.stop();
+					return;
+				}
+
+
+				const currentTs = startTime + step.ts;
+				console.log(currentTs, step.ts, step.notes.length, step);
+				for (let note of step.notes) {
+					const volume = note.volume;
+					const duration = note.duration;
+					const pitch = Note.get(note.fretboardNote).midi;
+					player.queueWaveTable(audioContext, channelMaster.input, voice, currentTs, pitch, duration, volume);
+				}
+
+				const update = () => {
+					if (audioContext.currentTime >= currentTs - 0.015) {
+						cursor.next();
+						this.updateFretboard();
+					} else {
+						requestAnimationFrame(update);
+					}
+				};
+				requestAnimationFrame(update);
+
+				setTimeout(func, (currentTs - audioContext.currentTime - 0.1) * 1000);
+			};
+
+			setTimeout(func, 10);
+			return;
+
+//			cursor.next();
+//			console.log(Object.assign({}, cursor.Iterator));
+//			// const ts = Object.assign({}, cursor.Iterator.CurrentEnrolledTimestamp);
+//			const ts = Object.assign({}, cursor.Iterator.currentTimeStamp);
+//			cursor.previous();
 
 //			const voice = await this.loadVoice('https://surikov.github.io/webaudiofontdata/sound/0270_Gibson_Les_Paul_sf2_file.js', '_tone_0270_Gibson_Les_Paul_sf2_file');
 //			const { player, audioContext, channelMaster } = this;
@@ -255,22 +342,22 @@ Vue.createApp({
 //			console.log(voice, r);
 
 
-			let prev = 0;
-			const func = () => {
-				if (!this.playing) return;
-				const wholeNote = 60 / this.bpm * this.osmd.Sheet.playbackSettings.rhythm.denominator * 1000;
-				const ts = this.next();
-				const diff = ts.realValue - prev;
-				console.log(ts.realValue, diff);
-				if (this.osmd.cursor.Iterator.EndReached) {
-					this.stop();
-					return;
-				}
-				setTimeout(func, diff  * wholeNote);
-				prev = ts.realValue;
-			};
-
-			func();
+//			let prev = 0;
+//			const func = () => {
+//				if (!this.playing) return;
+//				const wholeNote = 60 / this.bpm * this.osmd.Sheet.playbackSettings.rhythm.denominator * 1000;
+//				const ts = this.next();
+//				const diff = ts.realValue - prev;
+//				console.log(ts.realValue, diff);
+//				if (this.osmd.cursor.Iterator.EndReached) {
+//					this.stop();
+//					return;
+//				}
+//				setTimeout(func, diff  * wholeNote);
+//				prev = ts.realValue;
+//			};
+//
+//			func();
 		},
 
 		stop() {
