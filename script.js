@@ -241,7 +241,7 @@ Vue.createApp({
 			this.updateFretboard();
 		},
 
-		updateFretboard() {
+		async updateFretboard() {
 			const { osmd } = this;
 			const cursor = osmd.cursor;
 
@@ -285,15 +285,29 @@ Vue.createApp({
 			console.log(this.fretboard);
 			this.fretboard.render();
 
-			this.drawToCanvas();
+			await this.drawToCanvas();
 		},
 
 		async drawToCanvas() {
+			const { osmd } = this;
+			const cursor = osmd.cursor;
 			const canvas = this.$refs.canvas;
+
+			const index = Math.round(cursor.Iterator.currentTimeStamp.realValue * 1e3);
+			console.log('drawToCanvas', index);
+			if (!this.canvasCache) this.canvasCache = [];
+			if (this.canvasCache[index]) {
+				const bitmap = this.canvasCache[index];
+				const ctx = canvas.getContext('2d');
+				ctx.drawImage(bitmap, 0, 0);
+				console.log('draw from cache', index);
+				return;
+			}
+
+			const pixelRatio = 2;
 			if (!this.canvasInitialized) {
-				console.log(this.$refs.display.offsetWidth, this.$refs.display.offsetHeight);
-				canvas.width = this.$refs.display.offsetWidth;
-				canvas.height = this.$refs.display.offsetHeight;
+				canvas.width = this.$refs.display.offsetWidth * pixelRatio;
+				canvas.height = this.$refs.display.offsetHeight * pixelRatio;
 				this.canvasInitialized = true;
 			}
 			const ctx = canvas.getContext('2d');
@@ -306,18 +320,28 @@ Vue.createApp({
 			const osmdImg = await loadAsImage(osmdSvg);
 			const fretboardImg = await loadAsImage(fretboardSvg);
 
+			const padding = parseInt(window.getComputedStyle(this.$refs.osmdContainer).paddingLeft, 10);
+
+			ctx.save();
 			ctx.globalCompositeOperation = 'source-over';
 			ctx.fillStyle = '#ffffff';
 			ctx.fillRect(0, 0, canvas.width, canvas.height);
 			ctx.save();
-			ctx.translate(-this.osmdOffset, 0);
-			ctx.drawImage(osmdImg, 0, 0);
+			ctx.translate((-this.osmdOffset + padding) * pixelRatio, 0);
+			ctx.drawImage(osmdImg, 0, 0, osmdImg.width, osmdImg.height, 0, 0, osmdImg.width * pixelRatio, osmdImg.height * pixelRatio);
 			ctx.restore();
-			ctx.drawImage(osmdCursor, osmdCursor.offsetLeft - this.osmdOffset, osmdCursor.offsetTop, osmdCursor.offsetWidth, osmdCursor.offsetHeight);
-			ctx.drawImage(fretboardImg, 0, osmdImg.height);
+			ctx.drawImage(fretboardImg, 0, osmdImg.height * pixelRatio);
+			ctx.save();
+			ctx.scale(pixelRatio, pixelRatio);
+			ctx.drawImage(osmdCursor, osmdCursor.offsetLeft - this.osmdOffset + padding, osmdCursor.offsetTop, osmdCursor.offsetWidth, osmdCursor.offsetHeight);
+			ctx.restore();
 			ctx.globalCompositeOperation = 'difference';
 			ctx.fillStyle = '#ffffff';
 			ctx.fillRect(0, 0, canvas.width, canvas.height);
+			ctx.restore();
+
+			const bitmap = await createImageBitmap(canvas);
+			this.canvasCache[index] =  bitmap;
 		},
 
 
@@ -427,7 +451,16 @@ Vue.createApp({
 		},
 
 		async record() {
+			const { osmd } = this;
+			const cursor = osmd.cursor;
 			const canvas = this.$refs.canvas;
+
+			// cache all canvas
+			while (!cursor.Iterator.EndReached) {
+				cursor.next();
+				await this.updateFretboard();
+			}
+			cursor.reset();
 
 			const msd = this.audioContext.createMediaStreamDestination();
 			this.channelMaster.output.connect(msd);
