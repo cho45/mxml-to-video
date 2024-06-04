@@ -10,8 +10,10 @@
 		<link rel="preconnect" href="https://fonts.googleapis.com">
 		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 
-		<link href="https://fonts.googleapis.com/css?family=Roboto:100,300,400,500,700,900" rel="stylesheet">
-		<link href="https://fonts.googleapis.com/css2?family=Roboto+Serif:opsz@8..144&display=swap" rel="stylesheet">
+		<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+Display:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet">
+		<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Display:ital,wght@0,100..900;1,100..900&family=Noto+Serif+Display:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet">
+
+
 
 		<link href="https://cdn.jsdelivr.net/npm/@mdi/font@5.x/css/materialdesignicons.min.css" rel="stylesheet">
 		<link href="https://cdn.jsdelivr.net/npm/vuetify@3.4.4/dist/vuetify.min.css" rel="stylesheet">
@@ -22,40 +24,79 @@
 		<script src="./lib/opensheetmusicdisplay.min.js" defer></script>
 		<script src="script.js" type="module" defer></script>
 		<style>
+			.noto-serif-display {
+				font-family: "Noto Serif Display", serif;
+				font-optical-sizing: auto;
+				font-weight: 500;
+				font-style: normal;
+				font-variation-settings: "wdth" 100;
+			}
+
+			.noto-sans-display {
+				font-family: "Noto Sans Display", sans-serif;
+				font-optical-sizing: auto;
+				font-weight: 800;
+				font-style: normal;
+				font-variation-settings:
+					"wdth" 100;
+			}
+
 			body {
 				background: #fff;
 			}
 
-			.dot-text {
-				fill: #fff;
-				font-weight: bold;
-			}
-
 			#display {
-				width: 1280px;
+				width: 1080px;
 				margin: 20px auto;
 				overflow: hidden;
 				background: #fff;
 				mix-blend-mode: difference;
 			}
+
+			.rendered {
+				width: 1080px;
+				margin: 20px auto;
+			}
+		</style>
+
+		<style id="fretboard-style">
+			.dot-text {
+				fill: #fff;
+				font-weight: bold;
+			}
 		</style>
 	</head>
-	<body>
+	<body class="noto-sans-display">
 		<div id="app">
-			<div id="display">
-				<div ref="osmdContainer" style="position: relative; padding: 0 15px"></div>
-				<div id="fretboard"></div>
-			</div>
-			<div id="actions">
+			<div id="actions" class="rendered">
+				<v-btn @click="reset" :disabled="playing">reset</v-btn>
 				<v-btn @click="prev" :disabled="playing">prev</v-btn>
 				<v-btn @click="next" :disabled="playing">next</v-btn>
-				<div v-if="!playing">
-					<v-btn @click="play">play</v-btn>
-				</div>
-				<div v-else>
-					<v-btn @click="stop">stop</v-btn>
-				</div>
+				<v-btn @click="play" :disabled="playing">play</v-btn>
+				<v-btn @click="record" :disabled="playing">record</v-btn>
+				<v-btn @click="stop" :disabled="!playing">stop</v-btn>
 			</div>
+			<v-sheet class="rendered">
+				<h1>SVG</h1>
+				<div id="display" ref="display">
+					<div ref="osmdContainer" style="position: relative; padding: 0 15px"></div>
+					<div ref="fretboardContainer" id="fretboard"></div>
+				</div>
+			</v-sheet>
+			<v-sheet class="rendered">
+				<h1>SVG to Canvas Rendered</h1>
+				<canvas ref="canvas"></canvas>
+			</v-sheet>
+			<v-sheet class="rendered">
+				<h1>Recorded Video</h1>
+				<div v-show="video">
+					<video ref="video" controls download></video>
+					<p><a :href="video" download>Download</a></p>
+				</div>
+				<div v-show="!video">
+					<p>Recorded video will be shown here</p>
+				</div>
+			</v-sheet>
 		</div>
 	</body>
 </html>
