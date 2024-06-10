@@ -80,6 +80,9 @@
 				<v-btn @click="play" :disabled="playing">play</v-btn>
 				<v-btn @click="record" :disabled="playing">record</v-btn>
 				<v-btn @click="stop" :disabled="!playing">stop</v-btn>
+				<p>
+					{{ fileName }} {{ loading? 'loading...': 'loaded' }}
+				</p>
 			</div>
 			<v-sheet class="rendered">
 				<h1>SVG</h1>
@@ -88,11 +91,11 @@
 					<div ref="fretboardContainer" id="fretboard"></div>
 				</div>
 			</v-sheet>
-			<v-sheet class="rendered">
+			<v-sheet class="rendered" v-show="!loading">
 				<h1>SVG to Canvas Rendered</h1>
 				<canvas ref="canvas"></canvas>
 			</v-sheet>
-			<v-sheet class="rendered">
+			<v-sheet class="rendered" v-show="!loading">
 				<h1>Recorded Video</h1>
 				<div v-show="video">
 					<video ref="video" controls download></video>

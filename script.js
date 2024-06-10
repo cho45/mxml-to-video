@@ -41,6 +41,7 @@ Vue.createApp({
 			loading: false,
 			playing: false,
 			video: null,
+			fileName: "",
 		};
 	},
 
@@ -92,6 +93,9 @@ Vue.createApp({
 			...commonOpts
 		});
 		this.fretboard.render();
+		const fretboardSvg = this.$refs.fretboardContainer.querySelector('svg');
+		fretboardSvg.setAttribute('width', this.$refs.fretboardContainer.offsetWidth);
+		fretboardSvg.setAttribute('height', this.$refs.fretboardContainer.offsetHeight);
 
 		const { wrapper, positions } = this.fretboard;
 		const dotOffset = this.fretboard.getDotOffset();
@@ -143,7 +147,7 @@ Vue.createApp({
 			const reader = new FileReader();
 			reader.onload = (e) => {
 				const str = e.target.result;
-				this.loadScore(str);
+				this.loadScore(str, file.name);
 //				this.osmd.load(str).then(() => {
 //					this.osmd.render();
 //					this.osmd.cursor.reset();
@@ -180,9 +184,14 @@ Vue.createApp({
 	},
 
 	methods: {
-		async loadScore(url) {
+		async loadScore(url, name) {
+			this.fileName = name || url;
 			this.loading = true;
 			this.$refs.osmdContainer.innerHTML = "";
+			this.osmdRenderedCanvas = null;
+			this.video = null;
+
+			await timeout(10);
 			const osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay(this.$refs.osmdContainer);
 			this.osmd = osmd;
 			await osmd.load(url);
@@ -293,32 +302,42 @@ Vue.createApp({
 			const cursor = osmd.cursor;
 			const canvas = this.$refs.canvas;
 
-			const index = Math.round(cursor.Iterator.currentTimeStamp.realValue * 1e3);
-			console.log('drawToCanvas', index);
-			if (!this.canvasCache) this.canvasCache = [];
-			if (this.canvasCache[index]) {
-				const bitmap = this.canvasCache[index];
-				const ctx = canvas.getContext('2d');
-				ctx.drawImage(bitmap, 0, 0);
-				console.log('draw from cache', index);
-				return;
-			}
+			// const index = Math.round(cursor.Iterator.currentTimeStamp.realValue * 1e3);
+			// console.log('drawToCanvas', index);
 
 			const pixelRatio = 2;
 			if (!this.canvasInitialized) {
 				canvas.width = this.$refs.display.offsetWidth * pixelRatio;
 				canvas.height = this.$refs.display.offsetHeight * pixelRatio;
+//				canvas.width = 3840;
+//				canvas.height = 2160;
 				this.canvasInitialized = true;
 			}
 			const ctx = canvas.getContext('2d');
 
 
 			const osmdSvg = this.$refs.osmdContainer.querySelector('svg');
+			if (!this.osmdRenderedCanvas) {
+				// 大きな楽譜になると loadAsImage が非常に遅くなる
+				// 楽譜データは変化しないので一度だけレンダリングする
+				// カーソルはもともと上に重ねる設計となっている
+				const osmdImg = await loadAsImage(osmdSvg);
+				const osmdRenderedCanvas = document.createElement('canvas');
+				osmdRenderedCanvas.width = osmdSvg.width.baseVal.value * pixelRatio;
+				osmdRenderedCanvas.height = osmdSvg.height.baseVal.value * pixelRatio;
+				const ctx = osmdRenderedCanvas.getContext('2d');
+				// document.body.appendChild(osmdRenderedCanvas);
+				ctx.drawImage(osmdImg, 0, 0, osmdImg.width, osmdImg.height, 0, 0, osmdImg.width * pixelRatio, osmdImg.height * pixelRatio);
+				this.osmdRenderedCanvas = osmdRenderedCanvas;
+			}
+
 			const osmdCursor = this.$refs.osmdContainer.querySelector('img#cursorImg-0');
 			const fretboardSvg = this.$refs.fretboardContainer.querySelector('svg');
 
-			const osmdImg = await loadAsImage(osmdSvg);
 			const fretboardImg = await loadAsImage(fretboardSvg);
+			fretboardImg.width = fretboardSvg.parentNode.offsetWidth * pixelRatio;
+			fretboardImg.height = fretboardSvg.parentNode.offsetHeight * pixelRatio;
+			console.log(fretboardImg);
 
 			const padding = parseInt(window.getComputedStyle(this.$refs.osmdContainer).paddingLeft, 10);
 
@@ -328,9 +347,12 @@ Vue.createApp({
 			ctx.fillRect(0, 0, canvas.width, canvas.height);
 			ctx.save();
 			ctx.translate((-this.osmdOffset + padding) * pixelRatio, 0);
-			ctx.drawImage(osmdImg, 0, 0, osmdImg.width, osmdImg.height, 0, 0, osmdImg.width * pixelRatio, osmdImg.height * pixelRatio);
+			ctx.drawImage(this.osmdRenderedCanvas, 0, 0);
 			ctx.restore();
-			ctx.drawImage(fretboardImg, 0, osmdImg.height * pixelRatio);
+			ctx.save();
+			ctx.scale(pixelRatio, pixelRatio);
+			ctx.drawImage(fretboardImg, 0, osmdSvg.height.baseVal.value);
+			ctx.restore();
 			ctx.save();
 			ctx.scale(pixelRatio, pixelRatio);
 			ctx.drawImage(osmdCursor, osmdCursor.offsetLeft - this.osmdOffset + padding, osmdCursor.offsetTop, osmdCursor.offsetWidth, osmdCursor.offsetHeight);
@@ -339,9 +361,6 @@ Vue.createApp({
 			ctx.fillStyle = '#ffffff';
 			ctx.fillRect(0, 0, canvas.width, canvas.height);
 			ctx.restore();
-
-			const bitmap = await createImageBitmap(canvas);
-			this.canvasCache[index] =  bitmap;
 		},
 
 
@@ -455,23 +474,18 @@ Vue.createApp({
 			const cursor = osmd.cursor;
 			const canvas = this.$refs.canvas;
 
-			// cache all canvas
-			while (!cursor.Iterator.EndReached) {
-				cursor.next();
-				await this.updateFretboard();
-			}
-			cursor.reset();
-
 			const msd = this.audioContext.createMediaStreamDestination();
 			this.channelMaster.output.connect(msd);
 			console.log(msd.stream.getAudioTracks());
-			const videoStream = canvas.captureStream(30);
+			const videoStream = canvas.captureStream(60);
 
 			for (let track of msd.stream.getAudioTracks()) {
 				videoStream.addTrack(track);
 			}
 
-			const mediaRecorder = new MediaRecorder(videoStream);
+			const mediaRecorder = new MediaRecorder(videoStream, {
+				mimeType: 'video/webm;codecs=vp8',
+			});
 
 		   let	chunks = [];
 			mediaRecorder.ondataavailable = (e) => {
@@ -479,6 +493,7 @@ Vue.createApp({
 			};
 
 			mediaRecorder.onstop = (e) => {
+				// const blob = new Blob(chunks, { 'type' : 'video/webm' });
 				const blob = new Blob(chunks, { 'type' : 'video/mp4' });
 				const videoURL = URL.createObjectURL(blob);
 				this.$refs.video.src = videoURL;
@@ -489,14 +504,18 @@ Vue.createApp({
 				chunks.push(e.data);
 			};
 
+			console.log('recorder start');
 			mediaRecorder.start();
-			this.drawToCanvas();
 
-			await timeout(500);
+			await this.drawToCanvas();
+			await timeout(100);
 			await this.play();
-			await timeout(500);
+			await this.drawToCanvas();
+			await timeout(1000);
+			await this.drawToCanvas();
 
 			mediaRecorder.stop();
+			console.log('recorder stop');
 		},
 
 		getAllPositionForMeasure(measure) {
