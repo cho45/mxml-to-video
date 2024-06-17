@@ -97,6 +97,7 @@
 			</v-sheet>
 			<v-sheet class="rendered" v-show="!loading">
 				<h1>Recorded Video</h1>
+				<pre v-show="ffmpegLog">{{ ffmpegLog }}</pre>
 				<div v-show="video">
 					<video ref="video" controls download></video>
 					<p><a :href="video" download>Download</a></p>

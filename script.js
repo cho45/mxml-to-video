@@ -6,6 +6,9 @@ import {
 } from 'https://cdn.jsdelivr.net/npm/@moonwave99/fretboard.js@0.2.13/+esm';
 import { Key, Pcset, Chord, ChordType, Interval, Note, Scale } from 'https://cdn.jsdelivr.net/npm/tonal@5.1.0/+esm';
 
+import { FFmpeg } from './node_modules/@ffmpeg/ffmpeg/dist/esm/index.js';
+import { fetchFile, toBlobURL } from './node_modules/@ffmpeg/util/dist/esm/index.js';
+
 const timeout = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 const fretboardNotes = ['E2', 'A2', 'D3', 'G3', 'B3', 'E4'].reverse().map(n => {
@@ -14,6 +17,25 @@ const fretboardNotes = ['E2', 'A2', 'D3', 'G3', 'B3', 'E4'].reverse().map(n => {
 		return Note.fromMidi(open + i);
 	});
 });
+
+async function loadFFmpeg() {
+	if (loadFFmpeg.ffmpeg) {
+		return loadFFmpeg.ffmpeg;
+	}
+
+	const ffmpeg = new FFmpeg();
+	const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
+	// const baseURL = 'https://unpkg.com/@ffmpeg/core-mt@0.12.6/dist/esm';
+	console.log('loadFFmpeg', baseURL);
+	await ffmpeg.load({
+		coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
+		wasmURL: await toBlobURL( `${baseURL}/ffmpeg-core.wasm`, "application/wasm",),
+		// workerURL: await toBlobURL(`${baseURL}/ffmpeg-core.worker.js`, 'text/javascript'),
+	});
+	console.log('ffmpeg loaded');
+	loadFFmpeg.ffmpeg = ffmpeg;
+	return ffmpeg;
+}
 
 async function loadAsImage(svg) {
 	return new Promise((resolve, reject) => {
@@ -42,6 +64,7 @@ Vue.createApp({
 			playing: false,
 			video: null,
 			fileName: "",
+			ffmpegLog: ""
 		};
 	},
 
@@ -181,6 +204,8 @@ Vue.createApp({
 			channelMaster.output.connect(audioContext.destination);
 			channelMaster.output.gain.value = 0.3;
 		}
+
+		loadFFmpeg();
 	},
 
 	methods: {
@@ -291,7 +316,7 @@ Vue.createApp({
 				active: actives.some(active => active.string === note.StringNumberTab && active.fret === note.FretNumber),
 			}));
 
-			console.log(this.fretboard);
+			// console.log(this.fretboard);
 			this.fretboard.render();
 
 			await this.drawToCanvas();
@@ -337,7 +362,6 @@ Vue.createApp({
 			const fretboardImg = await loadAsImage(fretboardSvg);
 			fretboardImg.width = fretboardSvg.parentNode.offsetWidth * pixelRatio;
 			fretboardImg.height = fretboardSvg.parentNode.offsetHeight * pixelRatio;
-			console.log(fretboardImg);
 
 			const padding = parseInt(window.getComputedStyle(this.$refs.osmdContainer).paddingLeft, 10);
 
@@ -361,6 +385,10 @@ Vue.createApp({
 			ctx.fillStyle = '#ffffff';
 			ctx.fillRect(0, 0, canvas.width, canvas.height);
 			ctx.restore();
+
+			if (this.canvasTrack) {
+				this.canvasTrack.requestFrame();
+			};
 		},
 
 
@@ -433,7 +461,7 @@ Vue.createApp({
 
 
 					const currentTs = startTime + step.ts;
-					console.log(currentTs, step.ts, step.notes.length, step);
+					// console.log(currentTs, step.ts, step.notes.length, step);
 					for (let note of step.notes) {
 						const volume = note.volume;
 						const duration = note.duration;
@@ -441,10 +469,10 @@ Vue.createApp({
 						player.queueWaveTable(audioContext, channelMaster.input, voice, currentTs, pitch, duration, volume);
 					}
 
-					const update = () => {
-						if (audioContext.currentTime >= currentTs - 0.015) {
+					const update = async () => {
+						if (audioContext.currentTime >= currentTs - 0.005) {
 							cursor.next();
-							this.updateFretboard();
+							await this.updateFretboard();
 						} else {
 							requestAnimationFrame(update);
 						}
@@ -477,14 +505,15 @@ Vue.createApp({
 			const msd = this.audioContext.createMediaStreamDestination();
 			this.channelMaster.output.connect(msd);
 			console.log(msd.stream.getAudioTracks());
-			const videoStream = canvas.captureStream(60);
+			const videoStream = canvas.captureStream(0);
+			this.canvasTrack = videoStream.getVideoTracks()[0];
 
 			for (let track of msd.stream.getAudioTracks()) {
 				videoStream.addTrack(track);
 			}
 
 			const mediaRecorder = new MediaRecorder(videoStream, {
-				mimeType: 'video/webm;codecs=vp8',
+			//	mimeType: 'video/webm;codecs=vp8',
 			});
 
 		   let	chunks = [];
@@ -492,10 +521,12 @@ Vue.createApp({
 				chunks.push(e.data);
 			};
 
-			mediaRecorder.onstop = (e) => {
-				// const blob = new Blob(chunks, { 'type' : 'video/webm' });
-				const blob = new Blob(chunks, { 'type' : 'video/mp4' });
-				const videoURL = URL.createObjectURL(blob);
+			mediaRecorder.onstop = async (e) => {
+				const blob = new Blob(chunks, { 'type' : 'video/webm' });
+
+				const mp4 = await this.transcode(blob);
+
+				const videoURL = URL.createObjectURL(mp4);
 				this.$refs.video.src = videoURL;
 				this.video = videoURL;
 				chunks = [];
@@ -516,6 +547,7 @@ Vue.createApp({
 
 			mediaRecorder.stop();
 			console.log('recorder stop');
+			this.canvasTrack = null;
 		},
 
 		getAllPositionForMeasure(measure) {
@@ -548,6 +580,34 @@ Vue.createApp({
 					});
 				});
 			}
+		},
+
+		transcode: async function (inputBlob) {
+			this.ffmpegLog = "";
+			console.log('start transcode');
+			const ffmpeg = await loadFFmpeg();
+			const logger = ({type, message}) =>  {
+				console.log('[ffmpeg]', type, message);
+				this.ffmpegLog += message += '\n';
+			};
+
+			ffmpeg.on("log", logger);
+
+			const inputFileName = 'input.webm';
+			const outputFileName = 'output.mp4';
+			console.log('writeFile');
+			const file = new File([inputBlob], inputFileName, { type: inputBlob.type, lastModified: Date.now()});
+			await ffmpeg.writeFile(inputFileName, await fetchFile(file));
+			const args = ["-i", inputFileName, '-c:a', 'aac', '-fps_mode', 'vfr', '-c:v', 'libx264', '-crf', '22', '-preset', 'veryfast', outputFileName];
+			console.log('ffmpeg', args);
+			await ffmpeg.exec(args);
+			console.log('readFile');
+			const output = await ffmpeg.readFile(outputFileName);
+			console.log('end transcode');
+
+			ffmpeg.off("log", logger);
+
+			return new Blob([output.buffer], { type: 'video/mp4' });
 		},
 	},
 }).use(Vuetify.createVuetify({
