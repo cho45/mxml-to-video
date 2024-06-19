@@ -9,14 +9,10 @@ import { Key, Pcset, Chord, ChordType, Interval, Note, Scale } from 'https://cdn
 import { FFmpeg } from './node_modules/@ffmpeg/ffmpeg/dist/esm/index.js';
 import { fetchFile, toBlobURL } from './node_modules/@ffmpeg/util/dist/esm/index.js';
 
-const timeout = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const ENABLE_CACHE = false;
+const TRANSCODE = true;
 
-const fretboardNotes = ['E2', 'A2', 'D3', 'G3', 'B3', 'E4'].reverse().map(n => {
-	const open = Note.get(n).midi;
-	return Array(24).fill().map( (_, i) => {
-		return Note.fromMidi(open + i);
-	});
-});
+const timeout = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function loadFFmpeg() {
 	if (loadFFmpeg.ffmpeg) {
@@ -206,6 +202,22 @@ Vue.createApp({
 		}
 
 		loadFFmpeg();
+
+		this.fretboardNotes = ['E2', 'A2', 'D3', 'G3', 'B3', 'E4'].reverse().map(n => {
+			const open = Note.get(n).midi;
+			return Array(24).fill().map( (_, i) => {
+				return Note.fromMidi(open + i);
+			});
+		});
+
+		if (location.hash.includes("hdt")) {
+			this.fretboardNotes = ['Eb2', 'Ab2', 'Db3', 'Gb3', 'Bb3', 'Eb4'].reverse().map(n => {
+				const open = Note.get(n).midi;
+				return Array(24).fill().map( (_, i) => {
+					return Note.fromMidi(open + i);
+				});
+			});
+		}
 	},
 
 	methods: {
@@ -312,7 +324,7 @@ Vue.createApp({
 			this.fretboard.dots = measureNotes.map(note => ({
 				string: note.StringNumberTab,
 				fret: note.FretNumber,
-				note: fretboardNotes[note.StringNumberTab - 1][note.FretNumber],
+				note: this.fretboardNotes[note.StringNumberTab - 1][note.FretNumber],
 				active: actives.some(active => active.string === note.StringNumberTab && active.fret === note.FretNumber),
 			}));
 
@@ -327,68 +339,85 @@ Vue.createApp({
 			const cursor = osmd.cursor;
 			const canvas = this.$refs.canvas;
 
-			// const index = Math.round(cursor.Iterator.currentTimeStamp.realValue * 1e3);
-			// console.log('drawToCanvas', index);
+			const index = Math.round(cursor.Iterator.currentTimeStamp.realValue * 1e3);
+			console.log('drawToCanvas', index);
+			if (!this.canvasCache) this.canvasCache = [];
+			if (this.canvasCache[index]) {
+				const bitmap = this.canvasCache[index];
+				const ctx = canvas.getContext('2d');
+				ctx.drawImage(bitmap, 0, 0);
+				console.log('draw from cache', index);
+			} else {
+				const pixelRatio = 2;
+				if (!this.canvasInitialized) {
+					canvas.width = this.$refs.display.offsetWidth * pixelRatio;
+					canvas.height = this.$refs.display.offsetHeight * pixelRatio;
+	//				canvas.width = 3840;
+	//				canvas.height = 2160;
+					this.canvasInitialized = true;
+				}
+				const ctx = canvas.getContext('2d');
 
-			const pixelRatio = 2;
-			if (!this.canvasInitialized) {
-				canvas.width = this.$refs.display.offsetWidth * pixelRatio;
-				canvas.height = this.$refs.display.offsetHeight * pixelRatio;
-//				canvas.width = 3840;
-//				canvas.height = 2160;
-				this.canvasInitialized = true;
+
+				const osmdSvg = this.$refs.osmdContainer.querySelector('svg');
+				if (!this.osmdRenderedCanvas) {
+					// 大きな楽譜になると loadAsImage が非常に遅くなる
+					// 楽譜データは変化しないので一度だけレンダリングする
+					// カーソルはもともと上に重ねる設計となっている
+					const osmdImg = await loadAsImage(osmdSvg);
+					const osmdRenderedCanvas = document.createElement('canvas');
+					osmdRenderedCanvas.width = osmdSvg.width.baseVal.value * pixelRatio;
+					osmdRenderedCanvas.height = osmdSvg.height.baseVal.value * pixelRatio;
+					const ctx = osmdRenderedCanvas.getContext('2d');
+					// document.body.appendChild(osmdRenderedCanvas);
+					ctx.drawImage(osmdImg, 0, 0, osmdImg.width, osmdImg.height, 0, 0, osmdImg.width * pixelRatio, osmdImg.height * pixelRatio);
+					this.osmdRenderedCanvas = osmdRenderedCanvas;
+				}
+
+				const osmdCursor = this.$refs.osmdContainer.querySelector('img#cursorImg-0');
+				const fretboardSvg = this.$refs.fretboardContainer.querySelector('svg');
+
+				const fretboardImg = await loadAsImage(fretboardSvg);
+				fretboardImg.width = fretboardSvg.parentNode.offsetWidth * pixelRatio;
+				fretboardImg.height = fretboardSvg.parentNode.offsetHeight * pixelRatio;
+
+				const padding = parseInt(window.getComputedStyle(this.$refs.osmdContainer).paddingLeft, 10);
+
+				ctx.save();
+				ctx.globalCompositeOperation = 'source-over';
+				ctx.fillStyle = '#ffffff';
+				ctx.fillRect(0, 0, canvas.width, canvas.height);
+				ctx.save();
+				ctx.translate((-this.osmdOffset + padding) * pixelRatio, 0);
+				ctx.drawImage(this.osmdRenderedCanvas, 0, 0);
+				ctx.restore();
+				ctx.save();
+				ctx.scale(pixelRatio, pixelRatio);
+				ctx.drawImage(fretboardImg, 0, osmdSvg.height.baseVal.value);
+				ctx.restore();
+				ctx.save();
+				ctx.scale(pixelRatio, pixelRatio);
+				ctx.drawImage(osmdCursor, osmdCursor.offsetLeft - this.osmdOffset + padding, osmdCursor.offsetTop, osmdCursor.offsetWidth, osmdCursor.offsetHeight);
+				ctx.restore();
+				ctx.globalCompositeOperation = 'difference';
+				ctx.fillStyle = '#ffffff';
+				ctx.fillRect(0, 0, canvas.width, canvas.height);
+				ctx.font = "bold 20px sans-serif";
+				ctx.textAlign = 'right';
+				ctx.textBaseline = 'bottom';
+				ctx.fillText(index, canvas.width, canvas.height);
+				ctx.restore();
+
+				if (ENABLE_CACHE) {
+					const bitmap = await createImageBitmap(canvas);
+					this.canvasCache[index] =  bitmap;
+				}
 			}
-			const ctx = canvas.getContext('2d');
 
-
-			const osmdSvg = this.$refs.osmdContainer.querySelector('svg');
-			if (!this.osmdRenderedCanvas) {
-				// 大きな楽譜になると loadAsImage が非常に遅くなる
-				// 楽譜データは変化しないので一度だけレンダリングする
-				// カーソルはもともと上に重ねる設計となっている
-				const osmdImg = await loadAsImage(osmdSvg);
-				const osmdRenderedCanvas = document.createElement('canvas');
-				osmdRenderedCanvas.width = osmdSvg.width.baseVal.value * pixelRatio;
-				osmdRenderedCanvas.height = osmdSvg.height.baseVal.value * pixelRatio;
-				const ctx = osmdRenderedCanvas.getContext('2d');
-				// document.body.appendChild(osmdRenderedCanvas);
-				ctx.drawImage(osmdImg, 0, 0, osmdImg.width, osmdImg.height, 0, 0, osmdImg.width * pixelRatio, osmdImg.height * pixelRatio);
-				this.osmdRenderedCanvas = osmdRenderedCanvas;
-			}
-
-			const osmdCursor = this.$refs.osmdContainer.querySelector('img#cursorImg-0');
-			const fretboardSvg = this.$refs.fretboardContainer.querySelector('svg');
-
-			const fretboardImg = await loadAsImage(fretboardSvg);
-			fretboardImg.width = fretboardSvg.parentNode.offsetWidth * pixelRatio;
-			fretboardImg.height = fretboardSvg.parentNode.offsetHeight * pixelRatio;
-
-			const padding = parseInt(window.getComputedStyle(this.$refs.osmdContainer).paddingLeft, 10);
-
-			ctx.save();
-			ctx.globalCompositeOperation = 'source-over';
-			ctx.fillStyle = '#ffffff';
-			ctx.fillRect(0, 0, canvas.width, canvas.height);
-			ctx.save();
-			ctx.translate((-this.osmdOffset + padding) * pixelRatio, 0);
-			ctx.drawImage(this.osmdRenderedCanvas, 0, 0);
-			ctx.restore();
-			ctx.save();
-			ctx.scale(pixelRatio, pixelRatio);
-			ctx.drawImage(fretboardImg, 0, osmdSvg.height.baseVal.value);
-			ctx.restore();
-			ctx.save();
-			ctx.scale(pixelRatio, pixelRatio);
-			ctx.drawImage(osmdCursor, osmdCursor.offsetLeft - this.osmdOffset + padding, osmdCursor.offsetTop, osmdCursor.offsetWidth, osmdCursor.offsetHeight);
-			ctx.restore();
-			ctx.globalCompositeOperation = 'difference';
-			ctx.fillStyle = '#ffffff';
-			ctx.fillRect(0, 0, canvas.width, canvas.height);
-			ctx.restore();
-
-			if (this.canvasTrack) {
-				this.canvasTrack.requestFrame();
-			};
+//			if (this.canvasTrack) {
+//				console.log('requestFrame');
+//				this.canvasTrack.requestFrame();
+//			};
 		},
 
 
@@ -429,7 +458,7 @@ Vue.createApp({
 								const fret = note.FretNumber;
 								step.notes.push({
 									note, duration, volume, string, fret,
-									fretboardNote: fretboardNotes[string - 1][fret],
+									fretboardNote: this.fretboardNotes[string - 1][fret],
 								});
 							}
 						}
@@ -502,10 +531,19 @@ Vue.createApp({
 			const cursor = osmd.cursor;
 			const canvas = this.$refs.canvas;
 
+			if (ENABLE_CACHE) {
+				// cache all canvas
+				while (!cursor.Iterator.EndReached) {
+					cursor.next();
+					await this.updateFretboard();
+				}
+				cursor.reset();
+			}
+
 			const msd = this.audioContext.createMediaStreamDestination();
 			this.channelMaster.output.connect(msd);
 			console.log(msd.stream.getAudioTracks());
-			const videoStream = canvas.captureStream(0);
+			const videoStream = canvas.captureStream(30);
 			this.canvasTrack = videoStream.getVideoTracks()[0];
 
 			for (let track of msd.stream.getAudioTracks()) {
@@ -514,32 +552,41 @@ Vue.createApp({
 
 			const mediaRecorder = new MediaRecorder(videoStream, {
 			//	mimeType: 'video/webm;codecs=vp8',
+				audioBitsPerSecond: 128e3,
+				videoBitsPerSecond: 8e6,
 			});
 
 		   let	chunks = [];
 			mediaRecorder.ondataavailable = (e) => {
+				// console.log('ondataavailable', e.data.size);
 				chunks.push(e.data);
 			};
 
 			mediaRecorder.onstop = async (e) => {
+				console.log('onstop', chunks.length);
 				const blob = new Blob(chunks, { 'type' : 'video/webm' });
 
-				const mp4 = await this.transcode(blob);
+				let videoURL;
+				if (TRANSCODE) {
+					const mp4 = await this.transcode(blob);
+					videoURL = URL.createObjectURL(mp4);
+				} else {
+					videoURL = URL.createObjectURL(blob);
+				}
 
-				const videoURL = URL.createObjectURL(mp4);
 				this.$refs.video.src = videoURL;
 				this.video = videoURL;
 				chunks = [];
 			};
-			mediaRecorder.ondataavailable = (e) => {
-				chunks.push(e.data);
-			};
 
 			console.log('recorder start');
-			mediaRecorder.start();
+			mediaRecorder.start(0);
 
-			await this.drawToCanvas();
-			await timeout(100);
+			// 暖気を入れないとうまくエンコードしてくれない
+			for (let i = 0; i < 30; i++) {
+				await this.drawToCanvas();
+				await timeout(30);
+			};
 			await this.play();
 			await this.drawToCanvas();
 			await timeout(1000);
@@ -598,7 +645,10 @@ Vue.createApp({
 			console.log('writeFile');
 			const file = new File([inputBlob], inputFileName, { type: inputBlob.type, lastModified: Date.now()});
 			await ffmpeg.writeFile(inputFileName, await fetchFile(file));
-			const args = ["-i", inputFileName, '-c:a', 'aac', '-fps_mode', 'vfr', '-c:v', 'libx264', '-crf', '22', '-preset', 'veryfast', outputFileName];
+			// vfr
+			// const args = ["-i", inputFileName, '-c:a', 'aac', '-fps_mode', 'vfr', '-c:v', 'libx264', '-crf', '22', '-preset', 'veryfast', outputFileName];
+			// cfr
+			const args = ["-i", inputFileName, '-c:a', 'aac', '-vf', 'fps=30', '-fps_mode', 'cfr', '-c:v', 'libx264', '-crf', '22', '-preset', 'ultrafast', '-x264-params', 'keyint=150', outputFileName];
 			console.log('ffmpeg', args);
 			await ffmpeg.exec(args);
 			console.log('readFile');
