@@ -60,7 +60,9 @@ Vue.createApp({
 			playing: false,
 			video: null,
 			fileName: "",
-			ffmpegLog: ""
+			ffmpegLog: "",
+			transcodeState: "",
+			transcodeProgress: 0,
 		};
 	},
 
@@ -148,7 +150,9 @@ Vue.createApp({
 		wrapper.node().appendChild(document.getElementById('fretboard-style'));
 
 		// this.loadScore( './winonaryderandroid-Electric_Guitar.mxl');
-		this.loadScore( './hotarutest.mxl');
+		// this.loadScore( './hotarutest.mxl');
+		this.loadScore( './tabtest.mxl');
+		// this.loadScore( './test.mxl');
 
 		window.addEventListener('dragenter', (e) => {
 			e.preventDefault();
@@ -161,34 +165,7 @@ Vue.createApp({
 		window.addEventListener('drop', (e) => {
 			e.preventDefault();
 			const file = e.dataTransfer.files[0];
-			if (!file) return;
-			this.loading = true;
-			const reader = new FileReader();
-			reader.onload = (e) => {
-				const str = e.target.result;
-				this.loadScore(str, file.name);
-//				this.osmd.load(str).then(() => {
-//					this.osmd.render();
-//					this.osmd.cursor.reset();
-//					this.osmd.cursor.show();
-//				});
-			};
-			reader.onerror = (e) => {
-				alert(e);
-				this.loading = false;
-			};
-			const filename = file.name;
-			if (filename.match(/\.(xml|musicxml)$/i)) {
-				reader.readAsText(file);
-				return;
-			} else
-			if (filename.match(/\.(mxl)$/i)) {
-				reader.readAsBinaryString(file);
-				return;
-			} else {
-				this.loading = false;
-				alert('drop musicxml file is not valid');
-			}
+			this.loadFile(file);
 		});
 
 		if (!this.audioContext) {
@@ -221,6 +198,43 @@ Vue.createApp({
 	},
 
 	methods: {
+		async loadFileFromInput() {
+			const file = this.$refs.file.files[0]
+			this.loadFile(file);
+		},
+
+		async loadFile(file) {
+			console.log('loadFile', file);
+			if (!file) return;
+			this.loading = true;
+			const reader = new FileReader();
+			reader.onload = (e) => {
+				const str = e.target.result;
+				this.loadScore(str, file.name);
+//				this.osmd.load(str).then(() => {
+//					this.osmd.render();
+//					this.osmd.cursor.reset();
+//					this.osmd.cursor.show();
+//				});
+			};
+			reader.onerror = (e) => {
+				alert(e);
+				this.loading = false;
+			};
+			const filename = file.name;
+			if (filename.match(/\.(xml|musicxml)$/i)) {
+				reader.readAsText(file);
+				return;
+			} else
+			if (filename.match(/\.(mxl)$/i)) {
+				reader.readAsBinaryString(file);
+				return;
+			} else {
+				this.loading = false;
+				alert('selected musicxml file is not valid');
+			}
+		},
+
 		async loadScore(url, name) {
 			this.fileName = name || url;
 			this.loading = true;
@@ -474,6 +488,8 @@ Vue.createApp({
 				await audioContext.resume();
 
 				let startTime = audioContext.currentTime + 0.1;
+				let endTime = startTime + steps[steps.length - 1].ts + Math.max.apply(null, steps[steps.length - 1].notes.map(note => note.duration));
+				let first = true;
 
 				const func = () => {
 					if (!this.playing) {
@@ -483,7 +499,7 @@ Vue.createApp({
 
 					const step = steps.shift();
 					if (!step) {
-						resolve();
+						setTimeout(resolve, (endTime - audioContext.currentTime) * 1000);
 						this.stop();
 						return;
 					}
@@ -497,16 +513,20 @@ Vue.createApp({
 						const pitch = Note.get(note.fretboardNote).midi;
 						player.queueWaveTable(audioContext, channelMaster.input, voice, currentTs, pitch, duration, volume);
 					}
+					
 
-					const update = async () => {
-						if (audioContext.currentTime >= currentTs - 0.005) {
-							cursor.next();
-							await this.updateFretboard();
-						} else {
-							requestAnimationFrame(update);
-						}
-					};
-					requestAnimationFrame(update);
+					if (!first) {
+						const update = async () => {
+							if (audioContext.currentTime >= currentTs - 0.005) {
+								cursor.next();
+								await this.updateFretboard();
+							} else {
+								requestAnimationFrame(update);
+							}
+						};
+						requestAnimationFrame(update);
+					}
+					first = false;
 
 					setTimeout(func, (currentTs - audioContext.currentTime - 0.1) * 1000);
 				};
@@ -528,6 +548,11 @@ Vue.createApp({
 
 		async record() {
 			const { osmd } = this;
+
+			this.video = null;
+			this.transcodeState = "";
+			this.transcodeProgress = 0;
+
 			const cursor = osmd.cursor;
 			const canvas = this.$refs.canvas;
 
@@ -562,13 +587,19 @@ Vue.createApp({
 				chunks.push(e.data);
 			};
 
+			let startTime = performance.now();
 			mediaRecorder.onstop = async (e) => {
+				let stopTime = performance.now();
+				let totalTime = (stopTime - startTime) / 1000;
 				console.log('onstop', chunks.length);
 				const blob = new Blob(chunks, { 'type' : 'video/webm' });
 
 				let videoURL;
 				if (TRANSCODE) {
-					const mp4 = await this.transcode(blob);
+					const mp4 = await this.transcode(blob, (time) => {
+						console.log('transcode', time, totalTime, time / totalTime * 100 + '%');
+						this.transcodeProgress = time / totalTime * 100;
+					});
 					videoURL = URL.createObjectURL(mp4);
 				} else {
 					videoURL = URL.createObjectURL(blob);
@@ -629,19 +660,34 @@ Vue.createApp({
 			}
 		},
 
-		transcode: async function (inputBlob) {
+		transcode: async function (inputBlob, progressCallback) {
+			if (!progressCallback) progressCallback = () => {};
+
 			this.ffmpegLog = "";
+			this.transcodeState = "loading ffmpeg";
 			console.log('start transcode');
 			const ffmpeg = await loadFFmpeg();
 			const logger = ({type, message}) =>  {
 				console.log('[ffmpeg]', type, message);
 				this.ffmpegLog += message += '\n';
+				if (message.match(/^frame=.*?time=(\d+):(\d+):(\d+)/)) {
+					const h = parseInt(RegExp.$1, 10);
+					const m = parseInt(RegExp.$2, 10);
+					const s = parseInt(RegExp.$3, 10);
+					const time = h * 3600 + m * 60 + s;
+					progressCallback(time);
+				}
+				setTimeout(() => {
+					this.$refs.log.scrollTop = this.$refs.log.scrollHeight;
+				}, 10);
 			};
 
 			ffmpeg.on("log", logger);
 
 			const inputFileName = 'input.webm';
 			const outputFileName = 'output.mp4';
+			progressCallback(0);
+			this.transcodeState = "writing input file";
 			console.log('writeFile');
 			const file = new File([inputBlob], inputFileName, { type: inputBlob.type, lastModified: Date.now()});
 			await ffmpeg.writeFile(inputFileName, await fetchFile(file));
@@ -650,9 +696,13 @@ Vue.createApp({
 			// cfr
 			const args = ["-i", inputFileName, '-c:a', 'aac', '-vf', 'fps=30', '-fps_mode', 'cfr', '-c:v', 'libx264', '-crf', '22', '-preset', 'ultrafast', '-x264-params', 'keyint=150', outputFileName];
 			console.log('ffmpeg', args);
+			this.transcodeState = "transcoding";
 			await ffmpeg.exec(args);
+			this.transcodeState = "reading output file";
 			console.log('readFile');
 			const output = await ffmpeg.readFile(outputFileName);
+			progressCallback(Infinity);
+			this.transcodeState = "done";
 			console.log('end transcode');
 
 			ffmpeg.off("log", logger);

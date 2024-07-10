@@ -4,7 +4,7 @@
 		<meta charset="utf-8"/>
 		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
 
-		<title></title>
+		<title>MusicXML tablature to video file</title>
 
 		<link rev="made" href="mailto:cho45@lowreal.net">
 		<link rel="preconnect" href="https://fonts.googleapis.com">
@@ -48,10 +48,21 @@
 			#display {
 				width: 1280px;
 				height: 720px;
-				margin: 20px auto;
 				overflow: hidden;
 				background: #fff;
 				mix-blend-mode: difference;
+			}
+
+			#log {
+				white-space: pre-wrap;
+				height: 200px;
+				overflow: auto;
+				background: #efefef;
+				padding: 10px;
+			}
+
+			.v-btn {
+				margin: 0 10px 10px 0;
 			}
 
 			.rendered {
@@ -63,6 +74,13 @@
 			.rendered video {
 				max-width: 100%;
 			}
+
+			.renders {
+				transform: scale(0.5);
+				transform-origin: top center;
+				margin-bottom: -400px;
+			}
+
 		</style>
 
 		<style id="fretboard-style">
@@ -75,37 +93,52 @@
 	<body class="noto-sans-display">
 		<div id="app">
 			<div id="actions" class="rendered">
-				<v-btn @click="reset" :disabled="playing">reset</v-btn>
-				<v-btn @click="prev" :disabled="playing">prev</v-btn>
-				<v-btn @click="next" :disabled="playing">next</v-btn>
-				<v-btn @click="play" :disabled="playing">play</v-btn>
-				<v-btn @click="record" :disabled="playing">record</v-btn>
-				<v-btn @click="stop" :disabled="!playing">stop</v-btn>
+				<p>
+					<v-btn class="" @click="$refs.file.click()" :disabled="playing" prepend-icon="mdi-file-upload-outline">load</v-btn>
+					<input type="file" ref="file" @input="loadFileFromInput" style="display: none">
+					<v-btn class="text-red-accent-4" @click="record" :disabled="playing" prepend-icon="mdi-record">record</v-btn>
+				</p>
+				<p>
+					<v-btn class="" size="small" @click="reset" :disabled="playing" prepend-icon="mdi-skip-backward-outline">reset</v-btn>
+					<v-btn class="" size="small" @click="prev" :disabled="playing" prepend-icon="mdi-skip-previous">prev</v-btn>
+					<v-btn class="" size="small" @click="next" :disabled="playing" prepend-icon="mdi-skip-next">next</v-btn>
+					<v-btn class="" size="small" @click="play" :disabled="playing" prepend-icon="mdi-play">play</v-btn>
+					<v-btn class="" size="small" @click="stop" :disabled="!playing" prepend-icon="mdi-stop">stop</v-btn>
+				</p>
 				<p>
 					{{ fileName }} {{ loading? 'loading...': 'loaded' }}
 				</p>
 			</div>
-			<v-sheet class="rendered">
-				<h1>SVG</h1>
-				<div id="display" ref="display">
-					<div ref="osmdContainer" style="position: relative; padding: 0 15px"></div>
-					<div ref="fretboardContainer" id="fretboard"></div>
-				</div>
-			</v-sheet>
-			<v-sheet class="rendered" v-show="!loading">
-				<h1>SVG to Canvas Rendered</h1>
-				<canvas ref="canvas"></canvas>
-			</v-sheet>
-			<v-sheet class="rendered" v-show="!loading">
+			<div class="renders d-flex ga-4 align-start justify-center">
+				<v-sheet class="rendered flex-0-0">
+					<h1>SVG</h1>
+					<div id="display" ref="display">
+						<div ref="osmdContainer" style="position: relative; padding: 0 15px"></div>
+						<div ref="fretboardContainer" id="fretboard"></div>
+					</div>
+				</v-sheet>
+				<v-sheet class="rendered flex-0-0">
+					<h1>SVG to Canvas Rendered</h1>
+					<canvas ref="canvas"></canvas>
+				</v-sheet>
+			</div>
+			<v-sheet class="rendered flex-0-0">
 				<h1>Recorded Video</h1>
-				<pre v-show="ffmpegLog">{{ ffmpegLog }}</pre>
 				<div v-show="video">
 					<video ref="video" controls download></video>
-					<p><a :href="video" download>Download</a></p>
+					<p>
+						<v-btn class="bg-light-blue" download :href="video" size="large" prepend-icon="mdi-download">Download</v-btn>
+					</p>
 				</div>
 				<div v-show="!video">
 					<p>Recorded video will be shown here</p>
+					<v-progress-linear v-model="transcodeProgress" height="25" color="blue-grey">
+						<template v-slot:default="{ value }">
+							<strong>{{transcodeState}} {{ Math.ceil(value) }}%</strong>
+						</template>
+					</v-progress-linear>
 				</div>
+				<pre v-show="ffmpegLog" id="log" ref="log">{{ ffmpegLog }}</pre>
 			</v-sheet>
 		</div>
 	</body>
