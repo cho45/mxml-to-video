@@ -63,6 +63,7 @@ Vue.createApp({
 			ffmpegLog: "",
 			transcodeState: "",
 			transcodeProgress: 0,
+			isDark: true,
 		};
 	},
 
@@ -77,12 +78,12 @@ Vue.createApp({
 			stringWidth: 1,
 			fretCount: 22,
 			fretWidth: 1.5,
-			fretColor: '#333333',
-			stringColor: "#333333",
+			fretColor: this.isDark ? '#333333' : '#000000',
+			stringColor: this.isDark ? '#333333' : '#000000',
 			nutWidth: 7,
-			nutColor: '#000000',
+			nutColor: this.isDark ? '#000000' : '#ffffff',
 			scaleFrets: true,
-			middleFretColor: "#000000",
+			middleFretColor: this.isDark ? '#000000' : '#ffffff',
 			middleFretWidth: 2,
 			height: 200,
 			width: 1280,
@@ -92,7 +93,7 @@ Vue.createApp({
 			showFretNumbers: true,
 			fretNumbersHeight: 40,
 			fretNumbersMargin: 5,
-			fretNumbersColor: "#000000",
+			fretNumbersColor: this.isDark ? '#000000' : '#ffffff',
 			topPadding: 20,
 			bottomPadding: 10,
 			leftPadding: 20,
@@ -101,7 +102,7 @@ Vue.createApp({
 			dotText: ({ note, octave, interval }) => `${Note.enharmonic(note)}`,
 			dotStrokeColor: ({ interval, active, note}) =>
 				active
-				? "#666666"
+				? this.isDark ? '#666666' : '#000000'
 				: "#aaaaaa",
 			dotFill: ({ interval, active, note }) =>
 				active 
@@ -263,8 +264,8 @@ Vue.createApp({
 				renderSingleHorizontalStaffline: true,
 				cursorsOptions: [
 					{
-						alpha: 0.5,
-						color: "#666666",
+						alpha: this.isDark ? 0.5 : 0.3,
+						color: this.isDark ? '#666666' : '#49d3ff',
 						follow: true,
 						type: 0,
 					}
@@ -414,7 +415,7 @@ Vue.createApp({
 				ctx.drawImage(osmdCursor, osmdCursor.offsetLeft - this.osmdOffset + padding, osmdCursor.offsetTop, osmdCursor.offsetWidth, osmdCursor.offsetHeight);
 				ctx.restore();
 				ctx.globalCompositeOperation = 'difference';
-				ctx.fillStyle = '#ffffff';
+				ctx.fillStyle = this.isDark ? '#ffffff' : '#000000';
 				ctx.fillRect(0, 0, canvas.width, canvas.height);
 				ctx.font = "bold 20px sans-serif";
 				ctx.textAlign = 'right';
