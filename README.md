@@ -1,8 +1,6 @@
 MusicXML Tablature to Video
 ===========================
 
-<iframe width="560" height="315" src="https://www.youtube.com/embed/RKB9-qApfVE?si=kWMmFNIkcvEZySoB" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
-
 Generate mp4 video from MusicXML Tablature.
 
 * https://cho45.stfuawsc.com/mxml-to-video/
