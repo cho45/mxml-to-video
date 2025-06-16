@@ -657,279 +657,99 @@ Vue.createApp({
 		buildPlaybackSequence() {
 			const { osmd } = this;
 			const sheet = osmd.Sheet;
+			
+			console.log('Building playback sequence for', sheet.SourceMeasures.length, 'measures');
+			
+			// Safety check: limit processing for very large files
+			const maxMeasures = 200;
+			if (sheet.SourceMeasures.length > maxMeasures) {
+				console.warn(`File has ${sheet.SourceMeasures.length} measures. Processing only first ${maxMeasures} measures for performance.`);
+			}
+			const measureCount = Math.min(sheet.SourceMeasures.length, maxMeasures);
+
+			// Use OSMD's built-in repetition handling through Parts structure
 			const measures = [];
 			
-			console.log('=== Building playback sequence ===');
-			console.log('Total measures:', sheet.SourceMeasures.length);
-			console.log('OSMD Sheet object:', sheet);
-			console.log('OSMD GraphicSheet:', osmd.GraphicSheet);
-			
-			// Try to find repeat information in other locations
-			if (sheet.Parts && sheet.Parts.length > 0) {
-				console.log('Sheet Parts:', sheet.Parts);
-				const part = sheet.Parts[0];
-				console.log('First part:', part);
-				if (part.Measures) {
-					console.log('Part measures:', part.Measures.slice(0, 5)); // First 5 measures
-				}
-			}
-			
-			// First, collect all measures with their repeat information
-			for (let i = 0; i < sheet.SourceMeasures.length; i++) {
+			// First, analyze repeat information from the musical structure
+			for (let i = 0; i < measureCount; i++) {
 				const sourceMeasure = sheet.SourceMeasures[i];
 				const measureInfo = {
 					measureIndex: i,
 					measureNumber: sourceMeasure.MeasureNumber,
 					hasStartRepeat: false,
 					hasEndRepeat: false,
-					endings: []
+					endingsCount: 2  // Default: play once + repeat once = 2 total times
 				};
 
-				console.log(`Measure ${i}:`, sourceMeasure);
-				
-				// Check the repetition instructions that we saw in the properties
+				// Check OSMD's firstRepetitionInstructions and lastRepetitionInstructions
 				if (sourceMeasure.firstRepetitionInstructions && sourceMeasure.firstRepetitionInstructions.length > 0) {
-					console.log(`  firstRepetitionInstructions:`, sourceMeasure.firstRepetitionInstructions);
+					console.log(`Measure ${i} firstRepetitionInstructions:`, sourceMeasure.firstRepetitionInstructions);
 					for (let instr of sourceMeasure.firstRepetitionInstructions) {
-						console.log(`    -> First repeat instruction:`, instr.constructor.name, instr);
-						console.log(`    -> Instruction properties:`, Object.keys(instr));
-						console.log(`    -> Full instruction:`, instr);
-						
-						// Try multiple ways to identify the instruction
-						if (instr.constructor.name === 'RepetitionInstruction' || 
-							instr.constructor.name.includes('Repetition') ||
-							typeof instr.type !== 'undefined') {
-							console.log(`    -> RepetitionInstruction type: ${instr.type}`);
-							// type: 0 = start repeat (forward)
-							// type: 1 = end repeat (backward)  
-							// type: 2 = end repeat (backward)
-							if (instr.type === 0) {
-								measureInfo.hasStartRepeat = true;
-								console.log(`    -> ✓ SET hasStartRepeat = true (type ${instr.type}) from firstRepetitionInstructions`);
-							} else {
-								console.log(`    -> Type ${instr.type} not recognized as start repeat`);
-							}
-						} else {
-							console.log(`    -> Not recognized as RepetitionInstruction`);
+						console.log(`  -> type: ${instr.type}, constructor: ${instr.constructor.name}`);
+						if (instr.type === 0) { // Start repeat
+							measureInfo.hasStartRepeat = true;
+							console.log(`Measure ${i}: start repeat detected`);
+							break;
 						}
 					}
 				}
 				
 				if (sourceMeasure.lastRepetitionInstructions && sourceMeasure.lastRepetitionInstructions.length > 0) {
-					console.log(`  lastRepetitionInstructions:`, sourceMeasure.lastRepetitionInstructions);
+					console.log(`Measure ${i} lastRepetitionInstructions:`, sourceMeasure.lastRepetitionInstructions);
 					for (let instr of sourceMeasure.lastRepetitionInstructions) {
-						console.log(`    -> Last repeat instruction:`, instr.constructor.name, instr);
-						console.log(`    -> Instruction properties:`, Object.keys(instr));
-						console.log(`    -> Full instruction:`, instr);
-						
-						// Try multiple ways to identify the instruction
-						if (instr.constructor.name === 'RepetitionInstruction' || 
-							instr.constructor.name.includes('Repetition') ||
-							typeof instr.type !== 'undefined') {
-							console.log(`    -> RepetitionInstruction type: ${instr.type}`);
-							// type: 1 or 2 = end repeat (backward)
-							if (instr.type === 1 || instr.type === 2) {
-								measureInfo.hasEndRepeat = true;
-								console.log(`    -> ✓ SET hasEndRepeat = true (type ${instr.type}) from lastRepetitionInstructions`);
-							} else {
-								console.log(`    -> Type ${instr.type} not recognized as end repeat`);
-							}
-						} else {
-							console.log(`    -> Not recognized as RepetitionInstruction`);
-						}
-					}
-				}
-
-				// Check for repeat barlines in different locations
-				if (sourceMeasure.BeginInstructions) {
-					console.log(`  BeginInstructions:`, sourceMeasure.BeginInstructions);
-					for (let instr of sourceMeasure.BeginInstructions) {
-						console.log(`    Instruction:`, instr.constructor.name, instr);
-						if (instr.constructor.name === 'RepetitionInstruction') {
-							if (instr.type === 'start' || instr.type === 0) {
-								measureInfo.hasStartRepeat = true;
-								console.log(`    -> Found start repeat`);
-							}
-						}
-					}
-				}
-
-				if (sourceMeasure.EndInstructions) {
-					console.log(`  EndInstructions:`, sourceMeasure.EndInstructions);
-					for (let instr of sourceMeasure.EndInstructions) {
-						console.log(`    Instruction:`, instr.constructor.name, instr);
-						if (instr.constructor.name === 'RepetitionInstruction') {
-							if (instr.type === 'end' || instr.type === 1) {
-								measureInfo.hasEndRepeat = true;
-								console.log(`    -> Found end repeat`);
-							}
-						}
-					}
-				}
-
-				// Check for repeat barlines (legacy)
-				if (sourceMeasure.FirstInstruction) {
-					console.log(`  FirstInstruction:`, sourceMeasure.FirstInstruction);
-					for (let instr of sourceMeasure.FirstInstruction) {
-						console.log(`    Instruction:`, instr.constructor.name, instr);
-						if (instr.constructor.name === 'RepetitionInstruction') {
-							if (instr.type === 'start' || instr.type === 0) {
-								measureInfo.hasStartRepeat = true;
-								console.log(`    -> Found start repeat (legacy)`);
-							}
-						}
-					}
-				}
-
-				if (sourceMeasure.LastInstruction) {
-					console.log(`  LastInstruction:`, sourceMeasure.LastInstruction);
-					for (let instr of sourceMeasure.LastInstruction) {
-						console.log(`    Instruction:`, instr.constructor.name, instr);
-						if (instr.constructor.name === 'RepetitionInstruction') {
-							if (instr.type === 'end' || instr.type === 1) {
-								measureInfo.hasEndRepeat = true;
-								console.log(`    -> Found end repeat (legacy)`);
-							}
-						}
-					}
-				}
-
-				// Check all possible instruction locations
-				console.log(`  All properties:`, Object.keys(sourceMeasure));
-				
-				// Check for barlines (which may contain repeat information)
-				if (sourceMeasure.TempoInstructions) {
-					console.log(`  TempoInstructions:`, sourceMeasure.TempoInstructions);
-				}
-				if (sourceMeasure.StaffEntries) {
-					console.log(`  StaffEntries:`, sourceMeasure.StaffEntries);
-				}
-				
-				// Check for repeat barlines in GraphicSheet
-				if (osmd.GraphicSheet && osmd.GraphicSheet.MeasureList[i]) {
-					const graphicMeasure = osmd.GraphicSheet.MeasureList[i][0];
-					if (graphicMeasure) {
-						console.log(`  GraphicMeasure:`, graphicMeasure);
-						console.log(`  GraphicMeasure properties:`, Object.keys(graphicMeasure));
-						
-						if (graphicMeasure.beginInstructions) {
-							console.log(`    GraphicMeasure.beginInstructions:`, graphicMeasure.beginInstructions);
-						}
-						if (graphicMeasure.endInstructions) {
-							console.log(`    GraphicMeasure.endInstructions:`, graphicMeasure.endInstructions);
-						}
-						
-						// Check for barlines
-						if (graphicMeasure.leftBarline) {
-							console.log(`    leftBarline:`, graphicMeasure.leftBarline);
-						}
-						if (graphicMeasure.rightBarline) {
-							console.log(`    rightBarline:`, graphicMeasure.rightBarline);
-						}
-						if (graphicMeasure.beginRepeat) {
-							console.log(`    beginRepeat:`, graphicMeasure.beginRepeat);
-							measureInfo.hasStartRepeat = true;
-						}
-						if (graphicMeasure.endRepeat) {
-							console.log(`    endRepeat:`, graphicMeasure.endRepeat);
+						console.log(`  -> type: ${instr.type}, constructor: ${instr.constructor.name}`);
+						if (instr.type === 1 || instr.type === 2) { // End repeat
 							measureInfo.hasEndRepeat = true;
-						}
-					}
-				}
-				
-				// Also check the source measure for barlines directly
-				if (sourceMeasure.VerticalSourceStaffEntryContainers) {
-					for (let container of sourceMeasure.VerticalSourceStaffEntryContainers) {
-						if (container.StaffEntries) {
-							for (let staffEntry of container.StaffEntries) {
-								if (staffEntry.Instructions) {
-									for (let instr of staffEntry.Instructions) {
-										console.log(`    StaffEntry instruction:`, instr.constructor.name, instr);
-										if (instr.constructor.name === 'BarlineInstruction' || instr.constructor.name.includes('Barline')) {
-											console.log(`      -> Found barline instruction:`, instr);
-										}
-									}
-								}
-							}
+							console.log(`Measure ${i}: end repeat detected`);
+							break;
 						}
 					}
 				}
 
-				// Check for endings (1., 2., etc.)
-				for (let staffEntry of sourceMeasure.VerticalSourceStaffEntryContainers) {
-					for (let entry of staffEntry.StaffEntries) {
-						if (entry.Instructions) {
-							for (let instr of entry.Instructions) {
-								if (instr.constructor.name === 'RepetitionInstruction' && instr.EndingIndices) {
-									measureInfo.endings = instr.EndingIndices;
-								}
-							}
-						}
-					}
-				}
-
-				// Final check: if we found repetition instructions but flags aren't set, force them
-				if (!measureInfo.hasStartRepeat && !measureInfo.hasEndRepeat) {
-					if (sourceMeasure.firstRepetitionInstructions && sourceMeasure.firstRepetitionInstructions.length > 0) {
-						console.log(`  -> Force checking firstRepetitionInstructions for fallback`);
-						for (let instr of sourceMeasure.firstRepetitionInstructions) {
-							if (instr.type === 0) {
-								measureInfo.hasStartRepeat = true;
-								console.log(`  -> FORCE SET hasStartRepeat = true`);
-							}
-						}
-					}
-					if (sourceMeasure.lastRepetitionInstructions && sourceMeasure.lastRepetitionInstructions.length > 0) {
-						console.log(`  -> Force checking lastRepetitionInstructions for fallback`);
-						for (let instr of sourceMeasure.lastRepetitionInstructions) {
-							if (instr.type === 1 || instr.type === 2) {
-								measureInfo.hasEndRepeat = true;
-								console.log(`  -> FORCE SET hasEndRepeat = true`);
-							}
-						}
-					}
+				// Also check GraphicSheet for completeness
+				if (osmd.GraphicSheet?.MeasureList[i]) {
+					const graphicMeasure = osmd.GraphicSheet.MeasureList[i][0];
+					if (graphicMeasure?.beginRepeat) measureInfo.hasStartRepeat = true;
+					if (graphicMeasure?.endRepeat) measureInfo.hasEndRepeat = true;
 				}
 				
-				console.log(`  Measure ${i} info:`, measureInfo);
 				measures.push(measureInfo);
 			}
 
-			// Build the actual playback sequence
+			// Build playback sequence with repeat handling (simplified logic)
 			const playbackSequence = [];
 			let i = 0;
 			let repeatStack = [];
 
-			console.log('=== Building actual sequence ===');
-			console.log('Measures with repeat info:', measures);
-
+			console.log('=== Building playback sequence ===');
 			while (i < measures.length) {
 				const measure = measures[i];
-				console.log(`Processing measure ${i}:`, measure);
+				console.log(`Processing measure ${i}: start=${measure.hasStartRepeat}, end=${measure.hasEndRepeat}`);
 
 				if (measure.hasStartRepeat) {
 					repeatStack.push(i);
-					console.log(`  -> Start repeat, stack:`, repeatStack);
+					console.log(`  -> Added start repeat at ${i}, stack:`, repeatStack);
 				}
 
 				playbackSequence.push(measure);
-				console.log(`  -> Added to sequence (length now: ${playbackSequence.length})`);
+				console.log(`  -> Added measure ${i} to sequence`);
 
 				if (measure.hasEndRepeat) {
-					console.log(`  -> End repeat found`);
+					console.log(`  -> End repeat found at measure ${i}`);
 					if (repeatStack.length > 0) {
 						const startRepeatIndex = repeatStack.pop();
 						console.log(`  -> Repeating from ${startRepeatIndex} to ${i}`);
-						// Add the repeated section
+						// Add the repeated section once
 						for (let j = startRepeatIndex; j <= i; j++) {
 							playbackSequence.push(measures[j]);
-							console.log(`    -> Repeated measure ${j}`);
+							console.log(`    -> Added repeated measure ${j}`);
 						}
 					} else {
-						console.log(`  -> No start repeat, repeating from beginning`);
-						// End repeat without start repeat - repeat from beginning  
+						console.log(`  -> No start repeat, repeating from beginning to ${i}`);
+						// End repeat without start repeat - repeat from beginning
 						for (let j = 0; j <= i; j++) {
 							playbackSequence.push(measures[j]);
-							console.log(`    -> Repeated measure ${j}`);
+							console.log(`    -> Added repeated measure ${j}`);
 						}
 					}
 				}
@@ -937,103 +757,10 @@ Vue.createApp({
 				i++;
 			}
 
-			console.log('Final playback sequence:', playbackSequence);
-			
-			// Temporary workaround: If no repeats were detected, try to parse repeats from the raw XML
-			if (playbackSequence.length === measures.length) {
-				console.log('=== No repeats detected, trying XML parsing workaround ===');
-				const repeatedSequence = this.parseRepeatsFromXML(measures);
-				if (repeatedSequence.length > measures.length) {
-					console.log('Found repeats via XML parsing:', repeatedSequence);
-					return repeatedSequence;
-				}
-				
-				// Fallback for filename-based detection
-				if (this.fileName && (this.fileName.includes('repeat') || this.fileName.includes('Electric_Guitar'))) {
-					console.log('=== Applying manual repeat workaround ===');
-					const manualSequence = [];
-					// Add all measures first
-					manualSequence.push(...measures);
-					// Then repeat first 2 measures
-					if (measures.length >= 2) {
-						manualSequence.push(measures[0]);
-						manualSequence.push(measures[1]);
-					}
-					console.log('Manual repeat sequence:', manualSequence);
-					return manualSequence;
-				}
-			}
-
+			console.log(`Generated ${playbackSequence.length} measures from ${measures.length} original measures`);
 			return playbackSequence;
 		},
 
-		parseRepeatsFromXML(measures) {
-			// Try to find repeat information from the original XML source
-			const { osmd } = this;
-			
-			console.log('=== parseRepeatsFromXML ===');
-			console.log('Input measures:', measures.length);
-			
-			// Look for repeat patterns in source measures
-			const repeatStarts = [];
-			const repeatEnds = [];
-			
-			// For the known structure of test-Electric_Guitar.mxl:
-			// - Measure 1 has left repeat barline
-			// - Measure 2 has right repeat barline  
-			// - Then measure 3 has left repeat barline again
-			// - Measure 4 has right repeat barline with times="4"
-			
-			// For typical guitar tabs, we often see:
-			// - First 2 measures repeated once (so play twice total)
-			// - Then continue with remaining measures
-			
-			if (measures.length >= 2) {
-				// Basic pattern: repeat first 2 measures
-				repeatStarts.push(0);
-				repeatEnds.push(1);
-				
-				// If there are more than 4 measures, there might be additional repeats
-				if (measures.length > 4) {
-					// Look for another repeat pattern starting from measure 3
-					repeatStarts.push(2);
-					repeatEnds.push(3);
-				}
-			}
-			
-			console.log('Detected repeat starts:', repeatStarts);
-			console.log('Detected repeat ends:', repeatEnds);
-			
-			// Build sequence with detected repeats
-			if (repeatStarts.length > 0 && repeatEnds.length > 0) {
-				const sequence = [];
-				let i = 0;
-				
-				while (i < measures.length) {
-					sequence.push(measures[i]);
-					
-					// Check if this measure ends a repeat section
-					const repeatEndIndex = repeatEnds.findIndex(end => end === i);
-					if (repeatEndIndex !== -1) {
-						const startIndex = repeatStarts[repeatEndIndex];
-						console.log(`Adding repeat from measure ${startIndex} to ${i}`);
-						
-						// Add the repeated section
-						for (let j = startIndex; j <= i; j++) {
-							sequence.push(measures[j]);
-						}
-					}
-					
-					i++;
-				}
-				
-				console.log('Generated sequence length:', sequence.length);
-				return sequence;
-			}
-			
-			console.log('No repeats detected, returning original sequence');
-			return measures;
-		},
 
 		getMeasureSteps(cursor, targetMeasureIndex, wholeNoteLength, timeOffset) {
 			const steps = [];
@@ -1103,94 +830,47 @@ Vue.createApp({
 			const { osmd } = this;
 			const sheet = osmd.Sheet;
 			
-			console.log(`=== getMeasureLength for measure ${measureIndex} ===`);
-			console.log('wholeNoteLength:', wholeNoteLength);
+			// Use OSMD's built-in time signature detection
+			let timeSignature = null;
 			
-			// Get the time signature to calculate measure length
-			if (sheet.SourceMeasures && sheet.SourceMeasures[measureIndex]) {
+			// First check if there's a time signature at this specific measure
+			if (sheet.SourceMeasures?.[measureIndex]) {
 				const sourceMeasure = sheet.SourceMeasures[measureIndex];
 				
-				// Check for time signature in this measure
-				let timeSignature = null;
-				for (let staffEntry of sourceMeasure.VerticalSourceStaffEntryContainers) {
-					for (let entry of staffEntry.StaffEntries) {
-						if (entry.Instructions) {
-							for (let instr of entry.Instructions) {
-								console.log('  Found instruction:', instr.constructor.name, instr);
-								if (instr.constructor.name === 'RhythmInstruction') {
-									timeSignature = instr;
-									console.log('  -> Found time signature:', timeSignature);
-									break;
-								}
-							}
+				// Look for RhythmInstruction in this measure
+				for (let container of sourceMeasure.VerticalSourceStaffEntryContainers) {
+					for (let entry of container.StaffEntries) {
+						const rhythmInstruction = entry.Instructions?.find(instr => 
+							instr.constructor.name === 'RhythmInstruction'
+						);
+						if (rhythmInstruction) {
+							timeSignature = rhythmInstruction;
+							break;
 						}
 					}
 					if (timeSignature) break;
 				}
-				
-				// If no time signature found in this measure, use the default or previous one
-				if (!timeSignature && sheet.DefaultStartRhythm) {
-					timeSignature = sheet.DefaultStartRhythm;
-					console.log('  Using default time signature:', timeSignature);
-				}
-				
-				// Also check the first measure's attributes  
-				if (!timeSignature) {
-					console.log('  Checking alternative time signature locations...');
-					
-					// Check Sheet level
-					if (sheet.DefaultStartTempoInBpm) {
-						console.log('  Found DefaultStartTempoInBpm:', sheet.DefaultStartTempoInBpm);
-					}
-					
-					// Check all instruction types in first measure
-					if (measureIndex === 0) {
-						for (let staffEntry of sourceMeasure.VerticalSourceStaffEntryContainers) {
-							for (let entry of staffEntry.StaffEntries) {
-								if (entry.Instructions) {
-									for (let instr of entry.Instructions) {
-										console.log('  All instructions:', instr.constructor.name, instr);
-										// Check for different time signature instruction names
-										if (instr.constructor.name.includes('Time') || 
-											instr.constructor.name.includes('Rhythm') ||
-											instr.constructor.name.includes('Meter')) {
-											console.log('    -> Potential time signature:', instr);
-										}
-									}
-								}
-							}
-						}
-					}
-					
-					// Look for time signature in GraphicSheet
-					if (osmd.GraphicSheet && osmd.GraphicSheet.MeasureList[measureIndex] && osmd.GraphicSheet.MeasureList[measureIndex][0]) {
-						const graphicMeasure = osmd.GraphicSheet.MeasureList[measureIndex][0];
-						console.log('  GraphicMeasure:', graphicMeasure);
-						console.log('  GraphicMeasure properties:', Object.keys(graphicMeasure));
-					}
-				}
-				
-				if (timeSignature) {
-					// Calculate measure length based on time signature
-					const beatsPerMeasure = timeSignature.Numerator;
-					const beatType = timeSignature.Denominator;
-					const measureLength = (beatsPerMeasure / beatType) * 4; // Convert to whole notes
-					const result = measureLength * wholeNoteLength;
-					console.log(`  Time signature: ${beatsPerMeasure}/${beatType}`);
-					console.log(`  Measure length ratio: ${measureLength}`);
-					console.log(`  Final length: ${result}`);
-					return result;
-				}
 			}
 			
-			// Temporary workaround: Check filename for time signature hints
-			if (this.fileName && this.fileName.includes('3-4')) {
-				console.log('  Detected 3/4 time from filename');
-				return (3/4) * wholeNoteLength;
+			// Fall back to sheet's default time signature
+			if (!timeSignature && sheet.DefaultStartRhythm) {
+				timeSignature = sheet.DefaultStartRhythm;
 			}
 			
-			// Default to 4/4 time (1 whole note)
-			console.log('  Using default 4/4 time');
+			// Fall back to first part's time signature
+			if (!timeSignature && sheet.Parts?.[0]?.Measures?.[0]) {
+				const firstMeasure = sheet.Parts[0].Measures[0];
+				timeSignature = firstMeasure.timeSignature;
+			}
+			
+			if (timeSignature) {
+				const beatsPerMeasure = timeSignature.Numerator || 4;
+				const beatType = timeSignature.Denominator || 4;
+				const measureLength = (beatsPerMeasure / beatType) * 4; // Convert to whole notes
+				return measureLength * wholeNoteLength;
+			}
+			
+			// Default to 4/4 time
 			return wholeNoteLength;
 		},
 
