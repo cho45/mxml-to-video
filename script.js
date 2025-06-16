@@ -467,7 +467,8 @@ Vue.createApp({
 						stepIndex: stepIndex++,
 						virtualMeasure: virtualStep.virtualMeasure,
 						physicalMeasure: actualMeasure,
-						virtualPosition: this.virtualCursorPosition
+						virtualPosition: this.virtualCursorPosition,
+						stepDuration: 0 // Will be calculated later
 					};
 
 					// Collect notes at current position
@@ -498,15 +499,52 @@ Vue.createApp({
 						}
 					}
 					
+					// Calculate time based on timestamp difference to next position
+					let stepDuration = 0.25; // Default quarter note length
+					
+					// Get current and next timestamps to calculate actual duration
+					const currentTimestamp = actualTimestamp;
+					let nextTimestamp = currentTimestamp + 0.25; // Default
+					
+					// Look ahead to next virtual position to get real timestamp difference
+					if (this.virtualCursorPosition < this.virtualToPhysicalMap.length - 1) {
+						const nextVirtualStep = this.virtualToPhysicalMap[this.virtualCursorPosition + 1];
+						
+						// Check if this is a repeat jump (backward movement)
+						const isRepeatJump = (nextVirtualStep.physicalMeasure < actualMeasure || 
+											 (nextVirtualStep.physicalMeasure === actualMeasure && nextVirtualStep.physicalTimestamp < currentTimestamp));
+						
+						if (isRepeatJump) {
+							// For repeat jumps, use duration to end of current measure
+							nextTimestamp = Math.floor(currentTimestamp) + 1.0;
+						} else if (nextVirtualStep.physicalMeasure === actualMeasure) {
+							// Same measure: use timestamp difference
+							nextTimestamp = nextVirtualStep.physicalTimestamp;
+						} else {
+							// Different measure: use timestamp to end of current measure
+							nextTimestamp = Math.floor(currentTimestamp) + 1.0; // Next integer measure
+						}
+					}
+					
+					stepDuration = nextTimestamp - currentTimestamp;
+					
+					// Ensure duration is always positive and reasonable
+					if (stepDuration <= 0) {
+						console.warn(`Invalid duration ${stepDuration} at step ${stepIndex-1}, using default 0.25`);
+						stepDuration = 0.25;
+					}
+					
+					// Store the calculated duration in the step
+					step.stepDuration = stepDuration;
+					
 					steps.push(step);
-					console.log(`Step ${stepIndex-1}: virtual=${this.virtualCursorPosition}, measure=${actualMeasure}, timestamp=${actualTimestamp}, notes=${step.notes.length}`);
+					console.log(`Step ${stepIndex-1}: virtual=${this.virtualCursorPosition}, measure=${actualMeasure}, timestamp=${actualTimestamp}, notes=${step.notes.length}, duration=${stepDuration}`);
 					
 					// Move to next position using the wrapper
 					const hasNext = this.nextWithRepeated();
 					if (!hasNext) break;
 					
-					// Calculate time based on note length (simplified)
-					currentTime += 0.25 * wholeNoteLength; // Assume quarter note spacing for now
+					currentTime += stepDuration * wholeNoteLength;
 				}
 
 				console.log('Generated steps with virtual cursor:', steps.length);
