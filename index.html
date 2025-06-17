@@ -108,6 +108,9 @@
 				<p>
 					{{ fileName }} {{ loading? 'loading...': 'loaded' }}
 				</p>
+				<p>
+					<v-checkbox v-model="isDark" @click="drawToCanvas" label="Dark Theme"></v-checkbox>
+				</p>
 			</div>
 			<div class="renders d-flex ga-4 align-start justify-center">
 				<v-sheet class="rendered flex-0-0">
