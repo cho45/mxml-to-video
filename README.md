@@ -35,6 +35,24 @@ This project is a web application for visualizing MusicXML tablature, fretboard 
 
 ---
 
+## Conversion Flow
+
+```mermaid
+flowchart TD
+    A[MusicXML File Upload/Load] --> B[Parse & Render Score]
+    B --> C[Start MediaRecorder]
+    C --> D{Each Frame}
+    D --> E[Render Score]
+    E --> F[Render Fretboard]
+    F --> G[Play Audio]
+    G --> D
+    D --> H[Stop MediaRecorder]
+    H --> I[Transcode to mp4 FFmpeg]
+    I --> J[Download/Preview mp4]
+```
+
+---
+
 **Roles:**
 
 - `index.html`: UI and style
