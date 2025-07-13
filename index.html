@@ -81,6 +81,112 @@
 				margin-bottom: -400px;
 			}
 
+			/* New Layout Styles */
+			.preview-container {
+				width: 50%;
+				overflow: auto;
+				border: 1px solid #e0e0e0;
+				border-radius: 8px;
+				background: #fff;
+			}
+
+			.preview-container .display-container {
+				mix-blend-mode: difference;
+				width: calc(1280px * 0.4);
+				height: calc(720px * 0.4);
+			}
+
+			.preview-container.canvas .display-container {
+				mix-blend-mode: normal;
+			}
+
+			.preview-container #display {
+				transform: scale(0.4);
+				transform-origin: top left;
+				width: 1280px;
+				height: 720px;
+			}
+
+			.debug-preview-container {
+				width: 100%;
+			}
+
+			.debug-preview {
+				border: 1px solid #e0e0e0;
+				border-radius: 4px;
+				background: #fff;
+				transform: scale(0.5);
+				transform-origin: top left;
+				width: 200%;
+				height: 720px;
+				overflow: hidden;
+			}
+
+			/* Canvas in debug mode */
+			canvas.debug-preview {
+				width: 100%;
+				height: 360px;
+				max-width: 100%;
+				transform: none;
+				border: 1px solid #e0e0e0;
+				background: #fff;
+			}
+
+			.debug-controls {
+				padding: 16px;
+				background: #f8f9fa;
+				border-radius: 8px;
+				border: 1px solid #e0e0e0;
+			}
+
+			.output-video {
+				max-width: 100%;
+				border-radius: 8px;
+				box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+			}
+
+			.user-log {
+				white-space: pre-wrap;
+				height: 500px;
+				overflow-y: auto;
+				background: #f8f9fa;
+				padding: 16px;
+				border-radius: 4px;
+				font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+				font-size: 12px;
+				line-height: 1.4;
+				border: 1px solid #e0e0e0;
+				margin: 0;
+			}
+
+			/* Maintain aspect ratio for display */
+			#display {
+				width: 1280px;
+				height: 720px;
+				overflow: hidden;
+				background: #fff;
+			}
+
+			.normal-mode .preview-container {
+				display: block;
+			}
+
+			.normal-mode canvas {
+				display: none;
+			}
+
+			/* Card styling */
+			.v-card {
+				box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
+				border: 1px solid #e0e0e0;
+			}
+
+			.v-card-title {
+				border-bottom: 1px solid #f0f0f0;
+				margin-bottom: 16px !important;
+				padding-bottom: 8px !important;
+			}
+
 		</style>
 
 		<style id="fretboard-style">
@@ -92,55 +198,131 @@
 	</head>
 	<body class="noto-sans-display">
 		<div id="app">
-			<h1>MusicXML to Video</h1>
-			<div id="actions" class="rendered">
-				<p>
-					<v-btn class="" @click="$refs.file.click()" :disabled="playing" prepend-icon="mdi-file-upload-outline">load</v-btn>
-					<input type="file" ref="file" @input="loadFileFromInput" style="display: none">
-					<v-btn class="text-red-accent-4" @click="record" :disabled="playing" prepend-icon="mdi-record">record</v-btn>
-				</p>
-				<p>
-					<v-btn class="" size="small" @click="reset" :disabled="playing" prepend-icon="mdi-skip-backward-outline">reset</v-btn>
-					<v-btn class="" size="small" @click="prev" :disabled="playing" prepend-icon="mdi-skip-previous">prev</v-btn>
-					<v-btn class="" size="small" @click="next" :disabled="playing" prepend-icon="mdi-skip-next">next</v-btn>
-					<v-btn class="" size="small" @click="play" :disabled="playing" prepend-icon="mdi-play">play</v-btn>
-					<v-btn class="" size="small" @click="stop" :disabled="!playing" prepend-icon="mdi-stop">stop</v-btn>
-				</p>
-				<p>
-					{{ fileName }} {{ loading? 'loading...': 'loaded' }}
-				</p>
-			</div>
-			<div class="renders d-flex ga-4 align-start justify-center">
-				<v-sheet class="rendered flex-0-0">
-					<h1>SVG</h1>
-					<div id="display" ref="display">
-						<div ref="osmdContainer" style="position: relative; padding: 0 15px"></div>
-						<div ref="fretboardContainer" id="fretboard"></div>
-					</div>
-				</v-sheet>
-				<v-sheet class="rendered flex-0-0">
-					<h1>SVG to Canvas Rendered</h1>
-					<canvas ref="canvas"></canvas>
-				</v-sheet>
-			</div>
-			<v-sheet class="rendered flex-0-0">
-				<h1>Recorded Video</h1>
-				<div v-show="video">
-					<video ref="video" controls download></video>
-					<p>
-						<v-btn class="bg-light-blue" download :href="video" size="large" prepend-icon="mdi-download">Download</v-btn>
-					</p>
-				</div>
-				<div v-show="!video">
-					<p>Recorded video will be shown here</p>
-					<v-progress-linear v-model="transcodeProgress" height="25" color="blue-grey">
-						<template v-slot:default="{ value }">
-							<strong>{{transcodeState}} {{ Math.ceil(value) }}%</strong>
-						</template>
-					</v-progress-linear>
-				</div>
-				<pre v-show="ffmpegLog" id="log" ref="log">{{ ffmpegLog }}</pre>
-			</v-sheet>
+			<v-app>
+				<!-- Header with debug toggle -->
+				<v-app-bar color="primary" dark dense>
+					<v-toolbar-title class="text-h6">MusicXML to Video</v-toolbar-title>
+					<v-spacer></v-spacer>
+					<v-btn icon @click="debugMode = !debugMode" :title="debugMode ? 'Hide Debug' : 'Show Debug'">
+						<v-icon>{{ debugMode ? 'mdi-bug' : 'mdi-bug-outline' }}</v-icon>
+					</v-btn>
+				</v-app-bar>
+
+				<v-main>
+					<v-container fluid class="pa-4">
+						<!-- Main Controls -->
+						<v-row class="mb-4">
+							<v-col cols="12">
+								<v-card class="pa-4">
+									<v-card-title class="text-h6 pa-0 mb-3">
+										<v-icon class="mr-2">mdi-file-music</v-icon>
+										Load → Generate → Download
+									</v-card-title>
+									<div class="d-flex flex-wrap ga-2 align-center mb-3">
+										<v-btn @click="$refs.file.click()" :disabled="playing" prepend-icon="mdi-file-upload-outline" color="primary">
+											Load MusicXML
+										</v-btn>
+										<input type="file" ref="file" @input="loadFileFromInput" style="display: none" accept=".xml,.musicxml,.mxl">
+										<v-btn @click="record" :disabled="playing" prepend-icon="mdi-video-plus" color="red-darken-2" variant="elevated">
+											Start Generation
+										</v-btn>
+									</div>
+									<v-chip v-if="fileName" color="primary" variant="outlined" prepend-icon="mdi-file-music">
+										{{ fileName }} {{ loading ? 'loading...' : 'loaded' }}
+									</v-chip>
+								</v-card>
+							</v-col>
+						</v-row>
+
+						<!-- Preview Area -->
+						<v-row>
+							<v-col cols="12">
+								<v-card class="pa-4" :class="debugMode ? 'debug-mode' : 'normal-mode'">
+									<v-card-title class="text-h6 pa-0 mb-3">
+										{{ debugMode ? 'Preview Comparison' : 'Score Preview' }}
+									</v-card-title>
+									
+
+									<div style="display: flex; gap: 16px; align-items: flex-start;">
+										<!-- Display -->
+										<div class="preview-container">
+											<v-chip color="green" size="small">SVG Output</v-chip>
+											<div class="display-container">
+												<div id="display" ref="display">
+													<div ref="osmdContainer" style="position: relative; padding: 0 15px"></div>
+													<div ref="fretboardContainer" id="fretboard"></div>
+												</div>
+											</div>
+										</div>
+
+										<!-- Debug Canvas -->
+										<div class="preview-container canvas" :style="debugMode ? '' : 'display: none;'">
+											<v-chip color="green" size="small">Canvas Output</v-chip>
+											<div class="display-container">
+												<canvas ref="canvas" width="640" height="360" style="background: white; width: 100%; display: block;"></canvas>
+											</div>
+										</div>
+									</div>
+									
+									<!-- Debug Controls (only in debug mode) -->
+									<div v-if="debugMode" class="debug-controls mt-3 text-center">
+										<v-btn size="small" @click="reset" :disabled="playing" prepend-icon="mdi-skip-backward-outline">Reset</v-btn>
+										<v-btn size="small" @click="prev" :disabled="playing" prepend-icon="mdi-skip-previous">Prev</v-btn>
+										<v-btn size="small" @click="play" :disabled="playing" prepend-icon="mdi-play" color="green">Play</v-btn>
+										<v-btn size="small" @click="stop" :disabled="!playing" prepend-icon="mdi-stop">Stop</v-btn>
+										<v-btn size="small" @click="next" :disabled="playing" prepend-icon="mdi-skip-next">Next</v-btn>
+									</div>
+								</v-card>
+							</v-col>
+						</v-row>
+
+						<!-- Output Section -->
+						<v-row>
+							<v-col cols="12">
+								<v-card class="pa-4">
+									<v-card-title class="text-h6 pa-0 mb-3">
+										<v-icon class="mr-2">mdi-video-outline</v-icon>
+										Output Video
+									</v-card-title>
+									<div v-show="video" class="text-center">
+										<video ref="video" controls class="output-video mb-3"></video>
+										<v-btn download :href="video" size="large" prepend-icon="mdi-download" color="success" block>
+											Download MP4
+										</v-btn>
+									</div>
+									<div v-show="!video" class="text-center">
+										<v-icon size="64" color="grey-lighten-2" class="mb-3">mdi-video-plus-outline</v-icon>
+										<p class="text-body-1 mb-2">Click "Start Generation" to create video</p>
+										<v-progress-linear 
+											v-if="transcodeProgress > 0" 
+											v-model="transcodeProgress" 
+											height="25" 
+											color="primary"
+											class="mb-2">
+											<template v-slot:default="{ value }">
+												<strong>{{ transcodeState }} {{ Math.ceil(value) }}%</strong>
+											</template>
+										</v-progress-linear>
+									</div>
+								</v-card>
+							</v-col>
+						</v-row>
+
+						<!-- Process Log -->
+						<v-row class="mt-4">
+							<v-col cols="12">
+								<v-card class="pa-4">
+									<v-card-title class="text-h6 pa-0 mb-3">
+										<v-icon class="mr-2">mdi-console-line</v-icon>
+										Process Log
+									</v-card-title>
+									<pre ref="userLogContainer" class="user-log">{{ userLog || 'Ready to load MusicXML file...' }}</pre>
+								</v-card>
+							</v-col>
+						</v-row>
+					</v-container>
+				</v-main>
+			</v-app>
 		</div>
 	</body>
 </html>

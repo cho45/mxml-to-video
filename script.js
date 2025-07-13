@@ -69,9 +69,10 @@ Vue.createApp({
 			playing: false,
 			video: null,
 			fileName: "",
-			ffmpegLog: "",
+			userLog: "",
 			transcodeState: "",
 			transcodeProgress: 0,
+			debugMode: false,
 		};
 	},
 
@@ -207,27 +208,56 @@ Vue.createApp({
 	},
 
 	methods: {
+		// User-friendly log system
+		addUserLog(message, type = 'info') {
+			const timestamp = new Date().toLocaleTimeString();
+			const icon = {
+				'info': 'ℹ️',
+				'success': '✅',
+				'warning': '⚠️',
+				'error': '❌',
+				'progress': '⚙️',
+				'ffmpeg': '🎥',
+			}[type] || 'ℹ️';
+			
+			const logMessage = `[${timestamp}] ${icon} ${message}`;
+			this.userLog += logMessage + '\n';
+			
+			// Technical debug info still goes to console
+			console.log(`[UserLog ${type}]`, message);
+			
+			// Auto-scroll log container if it exists
+			this.$nextTick(() => {
+				if (this.$refs.userLogContainer) {
+					this.$refs.userLogContainer.scrollTop = this.$refs.userLogContainer.scrollHeight;
+				}
+			});
+		},
+
+		clearUserLog() {
+			this.userLog = '';
+		},
+
 		async loadFileFromInput() {
 			const file = this.$refs.file.files[0]
 			this.loadFile(file);
 		},
 
 		async loadFile(file) {
-			console.log('loadFile', file);
+			console.log('loadFile', file); // Technical debug
 			if (!file) return;
+			
 			this.loading = true;
+			this.addUserLog(`Loading file: ${file.name}`, 'info');
+			
 			const reader = new FileReader();
 			reader.onload = (e) => {
 				const str = e.target.result;
+				this.addUserLog('File loaded successfully, parsing MusicXML...', 'progress');
 				this.loadScore(str, file.name);
-//				this.osmd.load(str).then(() => {
-//					this.osmd.render();
-//					this.osmd.cursor.reset();
-//					this.osmd.cursor.show();
-//				});
 			};
 			reader.onerror = (e) => {
-				alert(e);
+				this.addUserLog(`Failed to read file: ${e.message || 'Unknown error'}`, 'error');
 				this.loading = false;
 			};
 			const filename = file.name;
@@ -251,11 +281,15 @@ Vue.createApp({
 			this.osmdRenderedCanvas = null;
 			this.video = null;
 
+			this.addUserLog('Initializing music score renderer...', 'progress');
+			
 			await timeout(10);
 			const osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay(this.$refs.osmdContainer);
 			this.osmd = osmd;
+			
+			this.addUserLog('Loading and parsing score data...', 'progress');
 			await osmd.load(url);
-			console.log(osmd);
+			console.log(osmd); // Technical debug
 			osmd.setOptions({
 				drawTitle: false,
 				drawSubtitle: false,
@@ -281,6 +315,8 @@ Vue.createApp({
 				drawingParameters: "compacttight",
 				spacingFactorSoftmax: 5,
 			});
+			
+			this.addUserLog('Rendering musical notation...', 'progress');
 			osmd.render();
 
 			if (osmd.Sheet.hasBPMInfo) {
@@ -290,8 +326,11 @@ Vue.createApp({
 			const cursor = osmd.cursor;
 			cursor.show();
 
+			this.addUserLog('Initializing fretboard display...', 'progress');
 			this.updateFretboard();
+			
 			this.loading = false;
+			this.addUserLog(`Score loaded successfully: ${this.fileName}`, 'success');
 		},
 
 		next() {
@@ -937,14 +976,12 @@ Vue.createApp({
 
 		async encodeVideo(frames, audioBlob, progressCallback) {
 			if (!progressCallback) progressCallback = () => {};
-
-			this.ffmpegLog = "";
 			console.log('encodeVideo: loading ffmpeg');
 			const ffmpeg = await loadFFmpeg();
 			
 			const logger = ({type, message}) => {
 				console.log('[ffmpeg]', type, message);
-				this.ffmpegLog += message + '\n';
+				this.addUserLog(message, 'ffmpeg');
 				const timeMatch = message.match(/^frame=.*?time=(\d+):(\d+):(\d+)/);
 				if (timeMatch) {
 					const h = parseInt(timeMatch[1], 10);
@@ -1469,13 +1506,13 @@ Vue.createApp({
 		transcode: async function (inputBlob, progressCallback) {
 			if (!progressCallback) progressCallback = () => {};
 
-			this.ffmpegLog = "";
+			this.addUserLog("loading ffmpeg", 'ffmpeg');
 			this.transcodeState = "loading ffmpeg";
 			console.log('start transcode');
 			const ffmpeg = await loadFFmpeg();
 			const logger = ({type, message}) =>  {
 				console.log('[ffmpeg]', type, message);
-				this.ffmpegLog += message += '\n';
+				this.addUserLog(message, 'ffmpeg');
 				const timeMatch = message.match(/^frame=.*?time=(\d+):(\d+):(\d+)/);
 				if (timeMatch) {
 					const h = parseInt(timeMatch[1], 10);
@@ -1511,6 +1548,7 @@ Vue.createApp({
 			progressCallback(Infinity);
 			this.transcodeState = "done";
 			console.log('end transcode');
+			this.addUserLog("transcode complete", 'success');
 
 			ffmpeg.off("log", logger);
 
