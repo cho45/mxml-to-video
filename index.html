@@ -10,8 +10,7 @@
 		<link rel="preconnect" href="https://fonts.googleapis.com">
 		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 
-		<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+Display:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet">
-		<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Display:ital,wght@0,100..900;1,100..900&family=Noto+Serif+Display:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet">
+		<link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet">
 
 
 
@@ -24,24 +23,12 @@
 		<script src="./lib/opensheetmusicdisplay.min.js" defer></script>
 		<script src="script.js" type="module" defer></script>
 		<style>
-			.noto-serif-display {
-				font-family: "Noto Serif Display", serif;
-				font-optical-sizing: auto;
-				font-weight: 500;
-				font-style: normal;
-				font-variation-settings: "wdth" 100;
-			}
-
-			.noto-sans-display {
-				font-family: "Noto Sans Display", sans-serif;
+			body {
+				font-family: "Roboto", sans-serif;
 				font-optical-sizing: auto;
 				font-weight: 800;
 				font-style: normal;
-				font-variation-settings:
-					"wdth" 100;
-			}
-
-			body {
+				font-variation-settings: "wdth" 100;
 				background: #fff;
 			}
 
@@ -196,7 +183,7 @@
 			}
 		</style>
 	</head>
-	<body class="noto-sans-display">
+	<body class="">
 		<div id="app">
 			<v-app>
 				<!-- Header with debug toggle -->
@@ -276,9 +263,10 @@
 							</v-col>
 						</v-row>
 
-						<!-- Output Section -->
-						<v-row>
-							<v-col cols="12">
+						<!-- Output Section & Process Log -->
+						<v-row class="mt-4">
+							<!-- Output Video -->
+							<v-col cols="12" md="6">
 								<v-card class="pa-4">
 									<v-card-title class="text-h6 pa-0 mb-3">
 										<v-icon class="mr-2">mdi-video-outline</v-icon>
@@ -306,11 +294,9 @@
 									</div>
 								</v-card>
 							</v-col>
-						</v-row>
 
-						<!-- Process Log -->
-						<v-row class="mt-4">
-							<v-col cols="12">
+							<!-- Process Log -->
+							<v-col cols="12" md="6">
 								<v-card class="pa-4">
 									<v-card-title class="text-h6 pa-0 mb-3">
 										<v-icon class="mr-2">mdi-console-line</v-icon>

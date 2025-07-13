@@ -197,6 +197,12 @@ Vue.createApp({
 			});
 		});
 
+		// Check for debug mode in hash parameters
+		const hashParams = new URLSearchParams(location.hash.slice(1));
+		if (hashParams.has('debug')) {
+			this.debugMode = true;
+		}
+
 		if (location.hash.includes("hdt")) {
 			this.fretboardNotes = ['Eb2', 'Ab2', 'Db3', 'Gb3', 'Bb3', 'Eb4'].reverse().map(n => {
 				const open = Note.get(n).midi;
@@ -218,6 +224,8 @@ Vue.createApp({
 				'error': '❌',
 				'progress': '⚙️',
 				'ffmpeg': '🎥',
+				'audio': '🎵',
+				'frames': '🖼️',
 			}[type] || 'ℹ️';
 			
 			const logMessage = `[${timestamp}] ${icon} ${message}`;
@@ -253,7 +261,7 @@ Vue.createApp({
 			const reader = new FileReader();
 			reader.onload = (e) => {
 				const str = e.target.result;
-				this.addUserLog('File loaded successfully, parsing MusicXML...', 'progress');
+				this.addUserLog('File loaded successfully, parsing MusicXML...', 'success');
 				this.loadScore(str, file.name);
 			};
 			reader.onerror = (e) => {
@@ -692,6 +700,7 @@ Vue.createApp({
 			this.transcodeProgress = 0;
 
 			console.log('record: generating steps and frames...');
+			this.addUserLog('Generating steps...', 'progress');
 			this.transcodeState = "generating steps";
 
 			// ステップ生成（既存のplay()ロジックを流用）
@@ -722,6 +731,7 @@ Vue.createApp({
 			this.$refs.video.src = videoURL;
 			this.video = videoURL;
 			
+			this.addUserLog('Video encoding complete', 'success');
 			this.transcodeState = "done";
 			this.transcodeProgress = 100;
 			console.log('record: complete');
@@ -784,6 +794,8 @@ Vue.createApp({
 			const frames = [];
 
 			cursor.reset();
+
+			this.addUserLog(`Generating ${steps.length} frames...`, 'frames');
 			
 			for (let i = 0; i < steps.length; i++) {
 				// カーソーを該当位置に移動
@@ -807,13 +819,15 @@ Vue.createApp({
 				
 				if (i % 10 === 0) {
 					// 並列実行のためフレーム進捗を保存
-					this.frameProgress = (i / steps.length) * 50; // フレーム進捗0-50%
+					this.frameProgress = (i / steps.length) * 100;
+					this.addUserLog(`Generated frame ${i + 1}/${steps.length} (${this.frameProgress.toFixed(2)}%)`, 'frames');
 					this.updateCombinedProgress();
 				}
 			}
 			
 			cursor.reset();
-			this.frameProgress = 50; // フレーム生成完了
+			this.frameProgress = 100; // フレーム生成完了
+			this.addUserLog(`Generated ${frames.length} frames`, 'success');
 			return frames;
 		},
 
@@ -834,6 +848,7 @@ Vue.createApp({
 			}
 
 			console.log('generateAudio: total duration', totalDuration, 'seconds');
+			this.addUserLog(`Generating audio: total duration ${totalDuration} seconds`, 'audio');
 
 			// OfflineAudioContextで高速レンダリング（メモリ使用量削減のため設定を最適化）
 			const sampleRate = 22050; // サンプルレートを下げる
@@ -869,8 +884,8 @@ Vue.createApp({
 				const progressInterval = setInterval(() => {
 					const progress = (offlineCtx.currentTime / totalDuration) * 100;
 					console.log('Audio rendering progress:', progress.toFixed(2) + '%');
-					// 並列実行のため音声は0-50%の範囲で表示
-					this.audioProgress = progress * 0.5; // 音声進捗を保存
+					this.addUserLog(`Audio rendering progress: ${offlineCtx.currentTime.toFixed(1)}/${totalDuration.toFixed(1)} (${progress.toFixed(2)}%)`, 'audio');
+					this.audioProgress = progress;
 					this.updateCombinedProgress();
 				}, 500); // 0.5秒間隔
 
@@ -888,12 +903,14 @@ Vue.createApp({
 				});
 			});
 			console.log('generateAudio: rendered', audioBuffer.duration, 'seconds');
-			this.audioProgress = 50; // 音声生成完了
+			this.addUserLog(`Audio rendering complete: ${audioBuffer.duration.toFixed(2)} seconds`, 'audio');
+			this.audioProgress = 100; // 音声生成完了
 
 			// AudioBufferをWAVファイルに変換
 			console.log('generateAudio: converting to WAV...');
 			const wavBlob = this.audioBufferToWav(audioBuffer);
 			console.log('generateAudio: WAV conversion complete');
+			this.addUserLog('Audio conversion to WAV complete', 'success');
 			return wavBlob;
 		},
 
@@ -1064,7 +1081,7 @@ Vue.createApp({
 		updateCombinedProgress() {
 			const audioProgress = this.audioProgress || 0;
 			const frameProgress = this.frameProgress || 0;
-			this.transcodeProgress = (audioProgress + frameProgress) / 2;
+			this.transcodeProgress = (audioProgress + frameProgress) / 2 / 2;
 		},
 
 		getAllPositionForMeasure(measure) {
