@@ -495,118 +495,7 @@ Vue.createApp({
 			return new Promise(async (resolve) => {
 				this.playing = true;
 
-				const { osmd } = this;
-				const wholeNoteLength = 60 / this.bpm * 4;
-
-				// Initialize virtual cursor that handles repeats
-				this.initRepeatedCursor();
-
-				// Build step sequence with timing information
-				const steps = [];
-				let currentTime = 0;
-				let stepIndex = 0;
-
-				this.resetRepeatedCursor();
-				
-				// Process each virtual position using nextWithRepeated() wrapper
-				while (this.virtualCursorPosition < this.virtualToPhysicalMap.length) {
-					const virtualStep = this.getCurrentVirtualStep();
-					const cursor = osmd.cursor;
-					
-					// Verify cursor position
-					const actualMeasure = cursor.Iterator.currentMeasureIndex;
-					const actualTimestamp = cursor.Iterator.currentTimeStamp.realValue;
-					
-					let step = {
-						ts: currentTime,
-						notes: [],
-						stepIndex: stepIndex++,
-						virtualMeasure: virtualStep.virtualMeasure,
-						physicalMeasure: actualMeasure,
-						virtualPosition: this.virtualCursorPosition,
-						stepDuration: 0 // Will be calculated later
-					};
-
-					// Collect notes at current position
-					const currentVoiceEntries = cursor.Iterator.CurrentVoiceEntries;
-					if (currentVoiceEntries && currentVoiceEntries.length) {
-						for (let entry of currentVoiceEntries) {
-							if (!entry.ParentSourceStaffEntry.ParentStaff.isTab) continue;
-
-							for (let note of entry.Notes) {
-								if (note.isRest()) continue;
-								let duration = note.Length.realValue * wholeNoteLength;
-								if (note.NoteTie) {
-									if (note.NoteTie.StartNote === note) {
-										duration += note.NoteTie.Notes[1].Length.realValue * wholeNoteLength;
-									} else {
-										continue;
-									}
-								}
-
-								let volume = note.ParentVoiceEntry.ParentVoice.Volume;
-								const string = note.StringNumberTab;
-								const fret = note.FretNumber;
-								step.notes.push({
-									note, duration, volume, string, fret,
-									fretboardNote: this.fretboardNotes[string - 1][fret],
-								});
-							}
-						}
-					}
-					
-					// Calculate time based on timestamp difference to next position
-					let stepDuration = 0.25; // Default quarter note length
-					
-					// Get current and next timestamps to calculate actual duration
-					const currentTimestamp = actualTimestamp;
-					let nextTimestamp = currentTimestamp + 0.25; // Default
-					
-					// Look ahead to next virtual position to get real timestamp difference
-					if (this.virtualCursorPosition < this.virtualToPhysicalMap.length - 1) {
-						const nextVirtualStep = this.virtualToPhysicalMap[this.virtualCursorPosition + 1];
-						
-						// Check if this is a repeat jump (backward movement)
-						const isRepeatJump = (nextVirtualStep.physicalMeasure < actualMeasure || 
-											 (nextVirtualStep.physicalMeasure === actualMeasure && nextVirtualStep.physicalTimestamp < currentTimestamp));
-						
-						if (isRepeatJump) {
-							// For repeat jumps, use duration to end of current measure
-							nextTimestamp = Math.floor(currentTimestamp) + 1.0;
-						} else if (nextVirtualStep.physicalMeasure === actualMeasure) {
-							// Same measure: use timestamp difference
-							nextTimestamp = nextVirtualStep.physicalTimestamp;
-						} else {
-							// Different measure: use timestamp to end of current measure
-							nextTimestamp = Math.floor(currentTimestamp) + 1.0; // Next integer measure
-						}
-					}
-					
-					stepDuration = nextTimestamp - currentTimestamp;
-					
-					// Ensure duration is always positive and reasonable
-					if (stepDuration <= 0) {
-						console.warn(`Invalid duration ${stepDuration} at step ${stepIndex-1}, using default 0.25`);
-						stepDuration = 0.25;
-					}
-					
-					// Store the calculated duration in the step
-					step.stepDuration = stepDuration;
-					
-					steps.push(step);
-					console.log(`Step ${stepIndex-1}: virtual=${this.virtualCursorPosition}, measure=${actualMeasure}, timestamp=${actualTimestamp}, notes=${step.notes.length}, duration=${stepDuration}`);
-					
-					// Move to next position using the wrapper
-					const hasNext = this.nextWithRepeated();
-					if (!hasNext) break;
-					
-					currentTime += stepDuration * wholeNoteLength;
-				}
-
-				console.log('Generated steps with virtual cursor:', steps.length);
-				
-				// Reset cursor to beginning for playback
-				this.resetRepeatedCursor();
+				const steps = await this.generateSteps();
 				
 				// Store current step index for visual tracking
 				let visualStepIndex = 0;
@@ -739,20 +628,38 @@ Vue.createApp({
 
 		async generateSteps() {
 			const { osmd } = this;
-			const cursor = osmd.cursor;
-			cursor.reset();
-
 			const wholeNoteLength = 60 / this.bpm * 4;
+
+			// Initialize virtual cursor that handles repeats
+			this.initRepeatedCursor();
+
+			// Build step sequence with timing information
 			const steps = [];
+			let currentTime = 0;
+			let stepIndex = 0;
+
+			this.resetRepeatedCursor();
 			
-			while (!cursor.Iterator.EndReached) {
-				let step = {
-					ts: cursor.Iterator.currentTimeStamp.realValue * wholeNoteLength,
-					notes: [],
-					measureIndex: cursor.Iterator.currentMeasureIndex,
-					timestamp: cursor.Iterator.currentTimeStamp.realValue,
-				};
+			// Process each virtual position using nextWithRepeated() wrapper
+			while (this.virtualCursorPosition < this.virtualToPhysicalMap.length) {
+				const virtualStep = this.getCurrentVirtualStep();
+				const cursor = osmd.cursor;
 				
+				// Verify cursor position
+				const actualMeasure = cursor.Iterator.currentMeasureIndex;
+				const actualTimestamp = cursor.Iterator.currentTimeStamp.realValue;
+				
+				let step = {
+					ts: currentTime,
+					notes: [],
+					stepIndex: stepIndex++,
+					virtualMeasure: virtualStep.virtualMeasure,
+					physicalMeasure: actualMeasure,
+					virtualPosition: this.virtualCursorPosition,
+					stepDuration: 0 // Will be calculated later
+				};
+
+				// Collect notes at current position
 				const currentVoiceEntries = cursor.Iterator.CurrentVoiceEntries;
 				if (currentVoiceEntries && currentVoiceEntries.length) {
 					for (let entry of currentVoiceEntries) {
@@ -779,11 +686,59 @@ Vue.createApp({
 						}
 					}
 				}
+				
+				// Calculate time based on timestamp difference to next position
+				let stepDuration = 0.25; // Default quarter note length
+				
+				// Get current and next timestamps to calculate actual duration
+				const currentTimestamp = actualTimestamp;
+				let nextTimestamp = currentTimestamp + 0.25; // Default
+				
+				// Look ahead to next virtual position to get real timestamp difference
+				if (this.virtualCursorPosition < this.virtualToPhysicalMap.length - 1) {
+					const nextVirtualStep = this.virtualToPhysicalMap[this.virtualCursorPosition + 1];
+					
+					// Check if this is a repeat jump (backward movement)
+					const isRepeatJump = (nextVirtualStep.physicalMeasure < actualMeasure || 
+											(nextVirtualStep.physicalMeasure === actualMeasure && nextVirtualStep.physicalTimestamp < currentTimestamp));
+					
+					if (isRepeatJump) {
+						// For repeat jumps, use duration to end of current measure
+						nextTimestamp = Math.floor(currentTimestamp) + 1.0;
+					} else if (nextVirtualStep.physicalMeasure === actualMeasure) {
+						// Same measure: use timestamp difference
+						nextTimestamp = nextVirtualStep.physicalTimestamp;
+					} else {
+						// Different measure: use timestamp to end of current measure
+						nextTimestamp = Math.floor(currentTimestamp) + 1.0; // Next integer measure
+					}
+				}
+				
+				stepDuration = nextTimestamp - currentTimestamp;
+				
+				// Ensure duration is always positive and reasonable
+				if (stepDuration <= 0) {
+					console.warn(`Invalid duration ${stepDuration} at step ${stepIndex-1}, using default 0.25`);
+					stepDuration = 0.25;
+				}
+				
+				// Store the calculated duration in the step
+				step.stepDuration = stepDuration;
+				
 				steps.push(step);
-				cursor.next();
+				console.log(`Step ${stepIndex-1}: virtual=${this.virtualCursorPosition}, measure=${actualMeasure}, timestamp=${actualTimestamp}, notes=${step.notes.length}, duration=${stepDuration}`);
+				
+				// Move to next position using the wrapper
+				const hasNext = this.nextWithRepeated();
+				if (!hasNext) break;
+				
+				currentTime += stepDuration * wholeNoteLength;
 			}
+
+			console.log('Generated steps with virtual cursor:', steps.length);
 			
-			cursor.reset();
+			// Reset cursor to beginning for playback
+			this.resetRepeatedCursor();
 			return steps;
 		},
 
@@ -799,10 +754,9 @@ Vue.createApp({
 			
 			for (let i = 0; i < steps.length; i++) {
 				// カーソーを該当位置に移動
-				while (cursor.Iterator.currentTimeStamp.realValue < steps[i].timestamp && !cursor.Iterator.EndReached) {
-					cursor.next();
-				}
-				
+				const targetStep = steps[i];
+				await this.syncCursorToVirtualPosition(targetStep.virtualPosition);
+
 				// フレットボード更新
 				await this.updateFretboard();
 				
@@ -869,7 +823,7 @@ Vue.createApp({
 			for (let step of steps) {
 				for (let note of step.notes) {
 					const pitch = Note.get(note.fretboardNote).midi;
-					player.queueWaveTable(offlineCtx, offlineCtx.destination, voice, step.ts, pitch, note.duration, note.volume);
+					player.queueWaveTable(offlineCtx, offlineCtx.destination, voice, step.ts, pitch, note.duration, note.volume * 0.5);
 					totalNotes++;
 				}
 			}

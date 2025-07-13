@@ -39,16 +39,22 @@ This project is a web application for visualizing MusicXML tablature, fretboard 
 
 ```mermaid
 flowchart TD
-    A[MusicXML File Upload/Load] --> B[Parse & Render Score]
-    B --> C[Start MediaRecorder]
-    C --> D{Each Frame}
-    D --> E[Render Score]
-    E --> F[Render Fretboard]
-    F --> G[Play Audio]
-    G --> D
-    D --> H[Stop MediaRecorder]
-    H --> I[Transcode to mp4 FFmpeg]
-    I --> J[Download/Preview mp4]
+    A[MusicXML File Upload/Load] --> B[Parse & Render Score with OSMD]
+    B --> C[Generate Steps with Repeat Processing]
+    C --> D[Start Video Generation]
+    D --> E[Generate Static Frames]
+    D --> F[Generate Audio with OfflineAudioContext]
+    E --> G{For Each Step}
+    G --> H[Render Score to Canvas]
+    H --> I[Render Fretboard to Canvas]
+    I --> J[Capture Canvas as PNG Frame]
+    J --> G
+    F --> K[Schedule Notes with WebAudioFont]
+    K --> L[Render Audio Buffer to WAV]
+    G --> M[Combine Frames + Audio with FFmpeg]
+    L --> M
+    M --> N[Encode to MP4]
+    N --> O[Download/Preview MP4]
 ```
 
 ---
