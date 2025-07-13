@@ -20,14 +20,23 @@ async function loadFFmpeg() {
 	}
 
 	const ffmpeg = new FFmpeg();
-	const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
-	// const baseURL = 'https://unpkg.com/@ffmpeg/core-mt@0.12.6/dist/esm';
-	console.log('loadFFmpeg', baseURL);
-	await ffmpeg.load({
-		coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
-		wasmURL: await toBlobURL( `${baseURL}/ffmpeg-core.wasm`, "application/wasm",),
-		// workerURL: await toBlobURL(`${baseURL}/ffmpeg-core.worker.js`, 'text/javascript'),
-	});
+	if (false && window.crossOriginIsolated) {
+		// chrome だと動かない
+		const baseURL = 'https://unpkg.com/@ffmpeg/core-mt@0.12.10/dist/esm';
+		console.log('loadFFmpeg', baseURL);
+		await ffmpeg.load({
+			coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
+			wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm",),
+			workerURL: await toBlobURL(`${baseURL}/ffmpeg-core.worker.js`, 'text/javascript'),
+		});
+	} else {
+		const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm';
+		console.log('loadFFmpeg', baseURL);
+		await ffmpeg.load({
+			coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
+			wasmURL: await toBlobURL( `${baseURL}/ffmpeg-core.wasm`, "application/wasm",),
+		});
+	}
 	console.log('ffmpeg loaded');
 	loadFFmpeg.ffmpeg = ffmpeg;
 	return ffmpeg;
@@ -362,7 +371,7 @@ Vue.createApp({
 				ctx.drawImage(bitmap, 0, 0);
 				console.log('draw from cache', index);
 			} else {
-				const pixelRatio = 2;
+				const pixelRatio = 1;
 				if (!this.canvasInitialized) {
 					canvas.width = this.$refs.display.offsetWidth * pixelRatio;
 					canvas.height = this.$refs.display.offsetHeight * pixelRatio;
@@ -555,7 +564,7 @@ Vue.createApp({
 				// Store current step index for visual tracking
 				let visualStepIndex = 0;
 
-				const voice = await this.loadVoice('https://surikov.github.io/webaudiofontdata/sound/0270_Gibson_Les_Paul_sf2_file.js', '_tone_0270_Gibson_Les_Paul_sf2_file');
+				const voice = await this.loadVoice('./assets/0270_Gibson_Les_Paul_sf2_file.js', '_tone_0270_Gibson_Les_Paul_sf2_file');
 				const { player, audioContext, channelMaster } = this;
 				await audioContext.resume();
 
@@ -650,15 +659,19 @@ Vue.createApp({
 			const steps = await this.generateSteps();
 			console.log('record: generated', steps.length, 'steps');
 
-			// 静止画シーケンス生成
-			this.transcodeState = "generating frames";
-			const frames = await this.generateFrames(steps);
-			console.log('record: generated', frames.length, 'frames');
+			// プログレス初期化
+			this.audioProgress = 0;
+			this.frameProgress = 0;
+			this.transcodeProgress = 0;
 
-			// 音声生成
-			this.transcodeState = "generating audio";
-			const audioBlob = await this.generateAudio(steps);
-			console.log('record: generated audio');
+			// 音声生成と静止画シーケンス生成を並列実行
+			this.transcodeState = "generating audio and frames";
+			const [audioBlob, frames] = await Promise.all([
+				this.generateAudio(steps),
+				this.generateFrames(steps)
+			]);
+			console.log('record: generated audio and', frames.length, 'frames');
+			this.transcodeProgress = 50; // 並列処理完了
 
 			// ffmpegで動画合成
 			this.transcodeState = "encoding video";
@@ -757,11 +770,14 @@ Vue.createApp({
 				});
 				
 				if (i % 10 === 0) {
-					this.transcodeProgress = (i / steps.length) * 25; // 25%まで
+					// 並列実行のためフレーム進捗を保存
+					this.frameProgress = (i / steps.length) * 50; // フレーム進捗0-50%
+					this.updateCombinedProgress();
 				}
 			}
 			
 			cursor.reset();
+			this.frameProgress = 50; // フレーム生成完了
 			return frames;
 		},
 
@@ -783,28 +799,65 @@ Vue.createApp({
 
 			console.log('generateAudio: total duration', totalDuration, 'seconds');
 
-			// OfflineAudioContextで高速レンダリング
-			const sampleRate = 44100;
-			const offlineCtx = new OfflineAudioContext(2, totalDuration * sampleRate, sampleRate);
+			// OfflineAudioContextで高速レンダリング（メモリ使用量削減のため設定を最適化）
+			const sampleRate = 22050; // サンプルレートを下げる
+			const channels = 1; // モノラルに変更
+			const contextLength = Math.ceil(totalDuration * sampleRate);
+			console.log('generateAudio: creating OfflineAudioContext', channels, 'ch,', sampleRate, 'Hz,', contextLength, 'samples');
+			const offlineCtx = new OfflineAudioContext(channels, contextLength, sampleRate);
+			
+			// OfflineAudioContextにはresumeメソッドがないので、ダミーメソッドを追加
+			offlineCtx.resume = () => Promise.resolve();
 			
 			// WebAudioFontプレイヤーのセットアップ
 			const player = new WebAudioFontPlayer();
-			const voice = await this.loadVoice('https://surikov.github.io/webaudiofontdata/sound/0270_Gibson_Les_Paul_sf2_file.js', '_tone_0270_Gibson_Les_Paul_sf2_file');
+			const voice = await this.loadVoice('./assets/0270_Gibson_Les_Paul_sf2_file.js', '_tone_0270_Gibson_Les_Paul_sf2_file');
 			
 			// 全音符をスケジューリング
+			let totalNotes = 0;
 			for (let step of steps) {
 				for (let note of step.notes) {
 					const pitch = Note.get(note.fretboardNote).midi;
 					player.queueWaveTable(offlineCtx, offlineCtx.destination, voice, step.ts, pitch, note.duration, note.volume);
+					totalNotes++;
 				}
 			}
+			console.log('generateAudio: scheduled', totalNotes, 'notes over', totalDuration.toFixed(2), 'seconds');
 
 			console.log('generateAudio: rendering...');
-			const audioBuffer = await offlineCtx.startRendering();
+			this.transcodeProgress = 10;
+
+			// currentTimeを定期的にチェックして進捗計算
+			const audioBuffer = await new Promise((resolve, reject) => {
+				// 進捗監視のためのinterval
+				const progressInterval = setInterval(() => {
+					const progress = (offlineCtx.currentTime / totalDuration) * 100;
+					console.log('Audio rendering progress:', progress.toFixed(2) + '%');
+					// 並列実行のため音声は0-50%の範囲で表示
+					this.audioProgress = progress * 0.5; // 音声進捗を保存
+					this.updateCombinedProgress();
+				}, 500); // 0.5秒間隔
+
+				// 完了イベントリスナー
+				offlineCtx.oncomplete = (event) => {
+					clearInterval(progressInterval);
+					console.log('Audio rendering complete');
+					resolve(event.renderedBuffer);
+				};
+
+				// レンダリング開始
+				offlineCtx.startRendering().catch((error) => {
+					clearInterval(progressInterval);
+					reject(error);
+				});
+			});
 			console.log('generateAudio: rendered', audioBuffer.duration, 'seconds');
+			this.audioProgress = 50; // 音声生成完了
 
 			// AudioBufferをWAVファイルに変換
+			console.log('generateAudio: converting to WAV...');
 			const wavBlob = this.audioBufferToWav(audioBuffer);
+			console.log('generateAudio: WAV conversion complete');
 			return wavBlob;
 		},
 
@@ -852,9 +905,10 @@ Vue.createApp({
 		},
 
 		createSilentWav(duration) {
-			const sampleRate = 44100;
+			const sampleRate = 22050; // generateAudioと同じサンプルレート
+			const channels = 1; // モノラル
 			const length = Math.floor(duration * sampleRate);
-			const buffer = new ArrayBuffer(44 + length * 2 * 2); // stereo
+			const buffer = new ArrayBuffer(44 + length * channels * 2);
 			const view = new DataView(buffer);
 			
 			// WAVヘッダー（無音）
@@ -865,18 +919,18 @@ Vue.createApp({
 			};
 			
 			writeString(0, 'RIFF');
-			view.setUint32(4, 36 + length * 2 * 2, true);
+			view.setUint32(4, 36 + length * channels * 2, true);
 			writeString(8, 'WAVE');
 			writeString(12, 'fmt ');
 			view.setUint32(16, 16, true);
 			view.setUint16(20, 1, true);
-			view.setUint16(22, 2, true); // stereo
+			view.setUint16(22, channels, true);
 			view.setUint32(24, sampleRate, true);
-			view.setUint32(28, sampleRate * 2 * 2, true);
-			view.setUint16(32, 2 * 2, true);
+			view.setUint32(28, sampleRate * channels * 2, true);
+			view.setUint16(32, channels * 2, true);
 			view.setUint16(34, 16, true);
 			writeString(36, 'data');
-			view.setUint32(40, length * 2 * 2, true);
+			view.setUint32(40, length * channels * 2, true);
 			
 			// データ部分は0で埋める（無音）
 			// ArrayBufferは初期化時に0で埋められるので何もしない
@@ -901,7 +955,7 @@ Vue.createApp({
 					const s = parseInt(timeMatch[3], 10);
 					const time = h * 3600 + m * 60 + s;
 					const totalDuration = frames.length > 0 ? frames[frames.length - 1].timestamp : 1;
-					progressCallback(25 + (time / totalDuration * 75)); // 25%から開始
+					progressCallback(50 + (time / totalDuration * 50)); // 50%から100%まで
 				}
 				setTimeout(() => {
 					if (this.$refs.log) {
@@ -939,19 +993,22 @@ Vue.createApp({
 
 				// ffmpegで動画生成
 				const outputFileName = 'output.mp4';
-				const args = [
-					'-f', 'concat',
-					'-safe', '0',
-					'-i', 'frames.txt',
-					'-i', 'audio.wav',
-					'-c:v', 'libx264',
-					'-c:a', 'aac',
-					'-pix_fmt', 'yuv420p',
-					'-crf', '22',
-					'-preset', 'ultrafast',
-					'-shortest',
-					outputFileName
-				];
+ 				const args = [
+ 					'-f', 'concat',
+ 					'-safe', '0',
+ 					'-i', 'frames.txt',
+ 					'-i', 'audio.wav',
+ 					'-c:v', 'libx264',
+					'-vf', 'scale=1280:-1',
+ 					'-tune', 'stillimage',
+ 					'-preset', 'ultrafast',
+ 					'-x264-params', 'keyint=150',
+ 					'-pix_fmt', 'yuv420p',
+ 					'-crf', '28',
+ 					'-shortest',
+ 					'-c:a', 'aac',
+ 					outputFileName
+ 				];
 
 				console.log('encodeVideo: running ffmpeg', args);
 				await ffmpeg.exec(args);
@@ -968,6 +1025,12 @@ Vue.createApp({
 				ffmpeg.off("log", logger);
 				throw error;
 			}
+		},
+
+		updateCombinedProgress() {
+			const audioProgress = this.audioProgress || 0;
+			const frameProgress = this.frameProgress || 0;
+			this.transcodeProgress = (audioProgress + frameProgress) / 2;
 		},
 
 		getAllPositionForMeasure(measure) {
