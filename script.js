@@ -643,88 +643,331 @@ Vue.createApp({
 			this.transcodeState = "";
 			this.transcodeProgress = 0;
 
-			const cursor = osmd.cursor;
-			const canvas = this.$refs.canvas;
+			console.log('record: generating steps and frames...');
+			this.transcodeState = "generating steps";
 
-			if (ENABLE_CACHE) {
-				// cache all canvas with repeat handling
-				const playbackSequence = this.buildPlaybackSequence();
-				for (let measureInfo of playbackSequence) {
-					cursor.reset();
-					// Navigate to the specific measure
-					while (!cursor.Iterator.EndReached && cursor.Iterator.currentMeasureIndex < measureInfo.measureIndex) {
-						cursor.next();
-					}
-					// Cache all positions in this measure
-					while (!cursor.Iterator.EndReached && cursor.Iterator.currentMeasureIndex === measureInfo.measureIndex) {
-						await this.updateFretboard();
-						cursor.next();
-					}
-				}
-				cursor.reset();
-			}
+			// ステップ生成（既存のplay()ロジックを流用）
+			const steps = await this.generateSteps();
+			console.log('record: generated', steps.length, 'steps');
 
-			const msd = this.audioContext.createMediaStreamDestination();
-			this.channelMaster.output.connect(msd);
-			console.log(msd.stream.getAudioTracks());
-			const videoStream = canvas.captureStream(30);
-			this.canvasTrack = videoStream.getVideoTracks()[0];
+			// 静止画シーケンス生成
+			this.transcodeState = "generating frames";
+			const frames = await this.generateFrames(steps);
+			console.log('record: generated', frames.length, 'frames');
 
-			for (let track of msd.stream.getAudioTracks()) {
-				videoStream.addTrack(track);
-			}
+			// 音声生成
+			this.transcodeState = "generating audio";
+			const audioBlob = await this.generateAudio(steps);
+			console.log('record: generated audio');
 
-			const mediaRecorder = new MediaRecorder(videoStream, {
-			//	mimeType: 'video/webm;codecs=vp8',
-				audioBitsPerSecond: 128e3,
-				videoBitsPerSecond: 8e6,
+			// ffmpegで動画合成
+			this.transcodeState = "encoding video";
+			const mp4 = await this.encodeVideo(frames, audioBlob, (progress) => {
+				this.transcodeProgress = progress;
 			});
 
-		   let	chunks = [];
-			mediaRecorder.ondataavailable = (e) => {
-				// console.log('ondataavailable', e.data.size);
-				chunks.push(e.data);
+			const videoURL = URL.createObjectURL(mp4);
+			this.$refs.video.src = videoURL;
+			this.video = videoURL;
+			
+			this.transcodeState = "done";
+			this.transcodeProgress = 100;
+			console.log('record: complete');
+		},
+
+		async generateSteps() {
+			const { osmd } = this;
+			const cursor = osmd.cursor;
+			cursor.reset();
+
+			const wholeNoteLength = 60 / this.bpm * 4;
+			const steps = [];
+			
+			while (!cursor.Iterator.EndReached) {
+				let step = {
+					ts: cursor.Iterator.currentTimeStamp.realValue * wholeNoteLength,
+					notes: [],
+					measureIndex: cursor.Iterator.currentMeasureIndex,
+					timestamp: cursor.Iterator.currentTimeStamp.realValue,
+				};
+				
+				const currentVoiceEntries = cursor.Iterator.CurrentVoiceEntries;
+				if (currentVoiceEntries && currentVoiceEntries.length) {
+					for (let entry of currentVoiceEntries) {
+						if (!entry.ParentSourceStaffEntry.ParentStaff.isTab) continue;
+
+						for (let note of entry.Notes) {
+							if (note.isRest()) continue;
+							let duration = note.Length.realValue * wholeNoteLength;
+							if (note.NoteTie) {
+								if (note.NoteTie.StartNote === note) {
+									duration += note.NoteTie.Notes[1].Length.realValue * wholeNoteLength;
+								} else {
+									continue;
+								}
+							}
+
+							let volume = note.ParentVoiceEntry.ParentVoice.Volume;
+							const string = note.StringNumberTab;
+							const fret = note.FretNumber;
+							step.notes.push({
+								note, duration, volume, string, fret,
+								fretboardNote: this.fretboardNotes[string - 1][fret],
+							});
+						}
+					}
+				}
+				steps.push(step);
+				cursor.next();
+			}
+			
+			cursor.reset();
+			return steps;
+		},
+
+		async generateFrames(steps) {
+			const { osmd } = this;
+			const cursor = osmd.cursor;
+			const canvas = this.$refs.canvas;
+			const frames = [];
+
+			cursor.reset();
+			
+			for (let i = 0; i < steps.length; i++) {
+				// カーソーを該当位置に移動
+				while (cursor.Iterator.currentTimeStamp.realValue < steps[i].timestamp && !cursor.Iterator.EndReached) {
+					cursor.next();
+				}
+				
+				// フレットボード更新
+				await this.updateFretboard();
+				
+				// Canvas描画
+				await this.drawToCanvas();
+				
+				// 静止画として保存
+				const blob = await new Promise(resolve => {
+					canvas.toBlob(resolve, 'image/png');
+				});
+				
+				frames.push({
+					blob,
+					timestamp: steps[i].ts,
+					duration: i < steps.length - 1 ? steps[i + 1].ts - steps[i].ts : 1.0
+				});
+				
+				if (i % 10 === 0) {
+					this.transcodeProgress = (i / steps.length) * 25; // 25%まで
+				}
+			}
+			
+			cursor.reset();
+			return frames;
+		},
+
+		async generateAudio(steps) {
+			// 音声の総再生時間を計算
+			let totalDuration = 0;
+			if (steps.length > 0) {
+				const lastStep = steps[steps.length - 1];
+				const maxNoteDuration = lastStep.notes.length > 0 
+					? Math.max(...lastStep.notes.map(note => note.duration))
+					: 0;
+				totalDuration = lastStep.ts + maxNoteDuration;
+			}
+			
+			if (totalDuration === 0) {
+				// 音声なしの場合、無音WAVを作成
+				return this.createSilentWav(1.0);
+			}
+
+			console.log('generateAudio: total duration', totalDuration, 'seconds');
+
+			// OfflineAudioContextで高速レンダリング
+			const sampleRate = 44100;
+			const offlineCtx = new OfflineAudioContext(2, totalDuration * sampleRate, sampleRate);
+			
+			// WebAudioFontプレイヤーのセットアップ
+			const player = new WebAudioFontPlayer();
+			const voice = await this.loadVoice('https://surikov.github.io/webaudiofontdata/sound/0270_Gibson_Les_Paul_sf2_file.js', '_tone_0270_Gibson_Les_Paul_sf2_file');
+			
+			// 全音符をスケジューリング
+			for (let step of steps) {
+				for (let note of step.notes) {
+					const pitch = Note.get(note.fretboardNote).midi;
+					player.queueWaveTable(offlineCtx, offlineCtx.destination, voice, step.ts, pitch, note.duration, note.volume);
+				}
+			}
+
+			console.log('generateAudio: rendering...');
+			const audioBuffer = await offlineCtx.startRendering();
+			console.log('generateAudio: rendered', audioBuffer.duration, 'seconds');
+
+			// AudioBufferをWAVファイルに変換
+			const wavBlob = this.audioBufferToWav(audioBuffer);
+			return wavBlob;
+		},
+
+		audioBufferToWav(audioBuffer) {
+			const numberOfChannels = audioBuffer.numberOfChannels;
+			const sampleRate = audioBuffer.sampleRate;
+			const length = audioBuffer.length;
+			
+			// WAVヘッダーサイズ + データサイズ
+			const buffer = new ArrayBuffer(44 + length * numberOfChannels * 2);
+			const view = new DataView(buffer);
+			
+			// WAVヘッダー書き込み
+			const writeString = (offset, string) => {
+				for (let i = 0; i < string.length; i++) {
+					view.setUint8(offset + i, string.charCodeAt(i));
+				}
+			};
+			
+			writeString(0, 'RIFF');
+			view.setUint32(4, 36 + length * numberOfChannels * 2, true);
+			writeString(8, 'WAVE');
+			writeString(12, 'fmt ');
+			view.setUint32(16, 16, true);
+			view.setUint16(20, 1, true);
+			view.setUint16(22, numberOfChannels, true);
+			view.setUint32(24, sampleRate, true);
+			view.setUint32(28, sampleRate * numberOfChannels * 2, true);
+			view.setUint16(32, numberOfChannels * 2, true);
+			view.setUint16(34, 16, true);
+			writeString(36, 'data');
+			view.setUint32(40, length * numberOfChannels * 2, true);
+			
+			// PCMデータ書き込み
+			let offset = 44;
+			for (let i = 0; i < length; i++) {
+				for (let channel = 0; channel < numberOfChannels; channel++) {
+					const sample = Math.max(-1, Math.min(1, audioBuffer.getChannelData(channel)[i]));
+					view.setInt16(offset, sample * 0x7FFF, true);
+					offset += 2;
+				}
+			}
+			
+			return new Blob([buffer], { type: 'audio/wav' });
+		},
+
+		createSilentWav(duration) {
+			const sampleRate = 44100;
+			const length = Math.floor(duration * sampleRate);
+			const buffer = new ArrayBuffer(44 + length * 2 * 2); // stereo
+			const view = new DataView(buffer);
+			
+			// WAVヘッダー（無音）
+			const writeString = (offset, string) => {
+				for (let i = 0; i < string.length; i++) {
+					view.setUint8(offset + i, string.charCodeAt(i));
+				}
+			};
+			
+			writeString(0, 'RIFF');
+			view.setUint32(4, 36 + length * 2 * 2, true);
+			writeString(8, 'WAVE');
+			writeString(12, 'fmt ');
+			view.setUint32(16, 16, true);
+			view.setUint16(20, 1, true);
+			view.setUint16(22, 2, true); // stereo
+			view.setUint32(24, sampleRate, true);
+			view.setUint32(28, sampleRate * 2 * 2, true);
+			view.setUint16(32, 2 * 2, true);
+			view.setUint16(34, 16, true);
+			writeString(36, 'data');
+			view.setUint32(40, length * 2 * 2, true);
+			
+			// データ部分は0で埋める（無音）
+			// ArrayBufferは初期化時に0で埋められるので何もしない
+			
+			return new Blob([buffer], { type: 'audio/wav' });
+		},
+
+		async encodeVideo(frames, audioBlob, progressCallback) {
+			if (!progressCallback) progressCallback = () => {};
+
+			this.ffmpegLog = "";
+			console.log('encodeVideo: loading ffmpeg');
+			const ffmpeg = await loadFFmpeg();
+			
+			const logger = ({type, message}) => {
+				console.log('[ffmpeg]', type, message);
+				this.ffmpegLog += message + '\n';
+				const timeMatch = message.match(/^frame=.*?time=(\d+):(\d+):(\d+)/);
+				if (timeMatch) {
+					const h = parseInt(timeMatch[1], 10);
+					const m = parseInt(timeMatch[2], 10);
+					const s = parseInt(timeMatch[3], 10);
+					const time = h * 3600 + m * 60 + s;
+					const totalDuration = frames.length > 0 ? frames[frames.length - 1].timestamp : 1;
+					progressCallback(25 + (time / totalDuration * 75)); // 25%から開始
+				}
+				setTimeout(() => {
+					if (this.$refs.log) {
+						this.$refs.log.scrollTop = this.$refs.log.scrollHeight;
+					}
+				}, 10);
 			};
 
-			let startTime = performance.now();
-			mediaRecorder.onstop = async (e) => {
-				let stopTime = performance.now();
-				let totalTime = (stopTime - startTime) / 1000;
-				console.log('onstop', chunks.length);
-				const blob = new Blob(chunks, { 'type' : 'video/webm' });
+			ffmpeg.on("log", logger);
 
-				let videoURL;
-				if (TRANSCODE) {
-					const mp4 = await this.transcode(blob, (time) => {
-						console.log('transcode', time, totalTime, time / totalTime * 100 + '%');
-						this.transcodeProgress = time / totalTime * 100;
-					});
-					videoURL = URL.createObjectURL(mp4);
-				} else {
-					videoURL = URL.createObjectURL(blob);
+			try {
+				// 音声ファイル書き込み
+				console.log('encodeVideo: writing audio file');
+				await ffmpeg.writeFile('audio.wav', await fetchFile(audioBlob));
+
+				// 画像フレーム書き込み
+				console.log('encodeVideo: writing', frames.length, 'frame files');
+				for (let i = 0; i < frames.length; i++) {
+					const fileName = `frame_${String(i).padStart(6, '0')}.png`;
+					await ffmpeg.writeFile(fileName, await fetchFile(frames[i].blob));
 				}
 
-				this.$refs.video.src = videoURL;
-				this.video = videoURL;
-				chunks = [];
-			};
+				// frame duration listファイル作成（各フレームの表示時間を指定）
+				let frameList = '';
+				for (let i = 0; i < frames.length; i++) {
+					frameList += `file 'frame_${String(i).padStart(6, '0')}.png'\n`;
+					frameList += `duration ${frames[i].duration}\n`;
+				}
+				// 最後のフレームは追加で指定が必要
+				if (frames.length > 0) {
+					frameList += `file 'frame_${String(frames.length - 1).padStart(6, '0')}.png'\n`;
+				}
+				
+				await ffmpeg.writeFile('frames.txt', new TextEncoder().encode(frameList));
 
-			console.log('recorder start');
-			mediaRecorder.start(0);
+				// ffmpegで動画生成
+				const outputFileName = 'output.mp4';
+				const args = [
+					'-f', 'concat',
+					'-safe', '0',
+					'-i', 'frames.txt',
+					'-i', 'audio.wav',
+					'-c:v', 'libx264',
+					'-c:a', 'aac',
+					'-pix_fmt', 'yuv420p',
+					'-crf', '22',
+					'-preset', 'ultrafast',
+					'-shortest',
+					outputFileName
+				];
 
-			// 暖気を入れないとうまくエンコードしてくれない
-			for (let i = 0; i < 30; i++) {
-				await this.drawToCanvas();
-				await timeout(30);
-			};
-			await this.play();
-			await this.drawToCanvas();
-			await timeout(1000);
-			await this.drawToCanvas();
+				console.log('encodeVideo: running ffmpeg', args);
+				await ffmpeg.exec(args);
 
-			mediaRecorder.stop();
-			console.log('recorder stop');
-			this.canvasTrack = null;
+				console.log('encodeVideo: reading output file');
+				const output = await ffmpeg.readFile(outputFileName);
+				progressCallback(100);
+				console.log('encodeVideo: complete');
+
+				ffmpeg.off("log", logger);
+				return new Blob([output.buffer], { type: 'video/mp4' });
+
+			} catch (error) {
+				ffmpeg.off("log", logger);
+				throw error;
+			}
 		},
 
 		getAllPositionForMeasure(measure) {
@@ -732,7 +975,6 @@ Vue.createApp({
 			for (let container of measure.VerticalSourceStaffEntryContainers) {
 				for (let staffEntry of container.StaffEntries) {
 					if (!staffEntry.parentStaff.isTab) continue;
-					const ts = staffEntry.AbsoluteTimestamp.realValue;
 					for (let voiceEntry of staffEntry.VoiceEntries) {
 						for (let note of voiceEntry.Notes) {
 							if (typeof note.StringNumberTab === 'undefined') continue;
@@ -1174,10 +1416,11 @@ Vue.createApp({
 			const logger = ({type, message}) =>  {
 				console.log('[ffmpeg]', type, message);
 				this.ffmpegLog += message += '\n';
-				if (message.match(/^frame=.*?time=(\d+):(\d+):(\d+)/)) {
-					const h = parseInt(RegExp.$1, 10);
-					const m = parseInt(RegExp.$2, 10);
-					const s = parseInt(RegExp.$3, 10);
+				const timeMatch = message.match(/^frame=.*?time=(\d+):(\d+):(\d+)/);
+				if (timeMatch) {
+					const h = parseInt(timeMatch[1], 10);
+					const m = parseInt(timeMatch[2], 10);
+					const s = parseInt(timeMatch[3], 10);
 					const time = h * 3600 + m * 60 + s;
 					progressCallback(time);
 				}
