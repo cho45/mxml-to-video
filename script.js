@@ -77,6 +77,13 @@ Vue.createApp({
 	},
 
 	computed: {
+		latestLogLine() {
+			if (!this.userLog) return 'Ready...';
+			const lines = this.userLog.trim().split('\n');
+			const lastLine = lines[lines.length - 1];
+			// Remove timestamp and emoji from log line for cleaner display
+			return lastLine.replace(/^\[\d+:\d+:\d+\]\s*/, '') || 'Ready...';
+		}
 	},
 
 	watch: {
@@ -805,7 +812,7 @@ Vue.createApp({
 			this.addUserLog(`Generating audio: total duration ${totalDuration} seconds`, 'audio');
 
 			// OfflineAudioContextで高速レンダリング（メモリ使用量削減のため設定を最適化）
-			const sampleRate = 22050; // サンプルレートを下げる
+			const sampleRate = 8000; // サンプルレートを下げる
 			const channels = 1; // モノラルに変更
 			const contextLength = Math.ceil(totalDuration * sampleRate);
 			console.log('generateAudio: creating OfflineAudioContext', channels, 'ch,', sampleRate, 'Hz,', contextLength, 'samples');
@@ -912,7 +919,7 @@ Vue.createApp({
 		},
 
 		createSilentWav(duration) {
-			const sampleRate = 22050; // generateAudioと同じサンプルレート
+			const sampleRate = 8000; // generateAudioと同じサンプルレート
 			const channels = 1; // モノラル
 			const length = Math.floor(duration * sampleRate);
 			const buffer = new ArrayBuffer(44 + length * channels * 2);

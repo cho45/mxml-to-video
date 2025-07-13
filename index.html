@@ -187,11 +187,13 @@
 		<div id="app">
 			<v-app>
 				<!-- Header with debug toggle -->
-				<v-app-bar color="primary" dark dense>
-					<v-toolbar-title class="text-h6">MusicXML to Video</v-toolbar-title>
-					<v-spacer></v-spacer>
-					<v-btn icon @click="debugMode = !debugMode" :title="debugMode ? 'Hide Debug' : 'Show Debug'">
-						<v-icon>{{ debugMode ? 'mdi-bug' : 'mdi-bug-outline' }}</v-icon>
+				<v-app-bar color="primary" dark density="compact">
+					<v-toolbar-title class="text-subtitle-1 mr-4">MusicXML to Video</v-toolbar-title>
+					<div class="text-caption flex-grow-1 text-truncate">
+						{{ latestLogLine }}
+					</div>
+					<v-btn style="margin: 12px" icon size="small" @click="debugMode = !debugMode" :title="debugMode ? 'Hide Debug' : 'Show Debug'">
+						<v-icon size="small">{{ debugMode ? 'mdi-bug' : 'mdi-bug-outline' }}</v-icon>
 					</v-btn>
 				</v-app-bar>
 
