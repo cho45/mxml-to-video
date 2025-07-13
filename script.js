@@ -1528,6 +1528,34 @@ Vue.createApp({
 	},
 }).use(Vuetify.createVuetify({
 	theme: {
-		defaultTheme: 'light' // or dark
+		defaultTheme: 'light',
+		themes: {
+			light: {
+				colors: {
+					primary: '#6A4C93',     // Deep Purple - メインブランドカラー
+					secondary: '#FF6B6B',   // Coral Red - アクセント要素
+					accent: '#4ECDC4',      // Teal - 強調表示
+					success: '#4CAF50',     // Green - 成功メッセージ
+					warning: '#FF9800',     // Orange - 警告
+					error: '#F44336',       // Red - エラー
+					info: '#2196F3',        // Blue - 情報
+					surface: '#FFFFFF',     // White - カード背景
+					background: '#F5F5F5'   // Light Gray - 全体背景
+				}
+			},
+			dark: {
+				colors: {
+					primary: '#8E44AD',     // Lighter Purple for dark mode
+					secondary: '#E74C3C',   // Bright Red
+					accent: '#1ABC9C',      // Bright Teal
+					success: '#27AE60',     // Bright Green
+					warning: '#F39C12',     // Bright Orange
+					error: '#E74C3C',       // Bright Red
+					info: '#3498DB',        // Bright Blue
+					surface: '#1E1E1E',     // Dark Gray - カード背景
+					background: '#121212'   // Very Dark Gray - 全体背景
+				}
+			}
+		}
 	}
 })).mount("#app");
