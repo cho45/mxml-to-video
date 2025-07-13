@@ -755,9 +755,6 @@ Vue.createApp({
 				// フレットボード更新
 				await this.updateFretboard();
 				
-				// Canvas描画
-				await this.drawToCanvas();
-				
 				// 静止画として保存
 				const blob = await new Promise(resolve => {
 					canvas.toBlob(resolve, 'image/png');
