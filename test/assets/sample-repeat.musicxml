@@ -89,11 +89,11 @@
         <direction-type>
           <metronome parentheses="no">
             <beat-unit>quarter</beat-unit>
-            <per-minute>120</per-minute>
+            <per-minute>131</per-minute>
           </metronome>
         </direction-type>
         <staff>1</staff>
-        <sound tempo="120"/>
+        <sound tempo="131"/>
       </direction>
       <barline location="left">
         <bar-style>heavy-light</bar-style>

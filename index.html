@@ -208,11 +208,11 @@
 										Load → Generate → Download
 									</v-card-title>
 									<div class="d-flex flex-wrap ga-2 align-center mb-3">
-										<v-btn @click="$refs.file.click()" :disabled="playing" prepend-icon="mdi-file-upload-outline" color="primary">
+										<v-btn @click="$refs.file.click()" :disabled="playing || loading" prepend-icon="mdi-file-upload-outline" color="primary">
 											Load MusicXML
 										</v-btn>
 										<input type="file" ref="file" @input="loadFileFromInput" style="display: none" accept=".xml,.musicxml,.mxl">
-										<v-btn @click="record" :disabled="playing" prepend-icon="mdi-video-plus" color="red-darken-2" variant="elevated">
+										<v-btn @click="record" :disabled="playing || loading" prepend-icon="mdi-video-plus" color="red-darken-2" variant="elevated">
 											Start Generation
 										</v-btn>
 									</div>

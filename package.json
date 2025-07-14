@@ -1,17 +1,18 @@
 {
-  "type" : "module",
+  "type": "module",
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.15",
-    "@ffmpeg/util": "^0.12.2"
+    "@ffmpeg/util": "^0.12.2",
+    "tonal": "^6.4.2"
   },
   "devDependencies": {
-    "vitest": "^2.1.8",
-    "jsdom": "^26.0.0",
     "canvas": "^3.1.0",
-    "cross-blob": "^3.0.0"
+    "cross-blob": "^3.0.0",
+    "jsdom": "^26.0.0",
+    "vitest": "^2.1.8"
   },
   "scripts": {
-    "server": "npx http-server .",
+    "server": "npx serve .",
     "test": "CI=1 vitest",
     "test:run": "CI=1 vitest run"
   }

@@ -1,58 +1,55 @@
 /**
  * MusicStepGenerator - MusicXMLリピート処理とステップ生成
- * script.jsからgenerateSteps関連メソッドを抽出
+ * note.Length.realValue: 0.25              // 四分音符 = 0.25単位
+ * actualTimestamp: 0, 0.25, 0.5, 0.75...   // 四分音符刻み
+ * stepDuration: 0.25                        // 四分音符間隔 = 0.25単位 
+ * 3/4 拍子でも同じ。
+ * note.Length.realValue
+ *
+ * 四分音符: 0.25
+ * 半音符:   0.5
+ * 全音符:   1.0
+ * 付点半音符: 0.75（3/4拍子の最後の音）
+ * cursor.Iterator.currentTimeStamp.realValue
+ * // 4/4拍子
+ * 0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0...
+ * // 3/4拍子  
+ * 0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5...
  */
 export class MusicStepGenerator {
     constructor(osmd, options = {}) {
         this.osmd = osmd;
-        this.bpm = options.bpm || 120;
+        this.defaultBpm = options.bpm || 120;
+        this.fretboardNotes = options.fretboardNotes || [];
         
-        // デフォルトのフレットボード音階（標準チューニング）
-        this.fretboardNotes = ['E2', 'A2', 'D3', 'G3', 'B3', 'E4'].reverse().map(n => {
-            const open = this.noteToMidi(n);
-            return Array(24).fill().map((_, i) => {
-                return this.midiToNote(open + i);
-            });
-        });
-        
-        // ハーフステップダウンチューニング対応
-        if (options.halfStepDown) {
-            this.fretboardNotes = ['Eb2', 'Ab2', 'Db3', 'Gb3', 'Bb3', 'Eb4'].reverse().map(n => {
-                const open = this.noteToMidi(n);
-                return Array(24).fill().map((_, i) => {
-                    return this.midiToNote(open + i);
-                });
-            });
-        }
+        // 楽譜からBPMを取得、なければデフォルト値を使用
+        this.bpm = this.extractBpmFromScore() || this.defaultBpm;
         
         // リピート処理用の状態変数
         this.virtualToPhysicalMap = null;
         this.virtualCursorPosition = 0;
     }
     
-    // ノート名からMIDI番号への変換（簡易版）
-    noteToMidi(noteName) {
-        const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-        const match = noteName.match(/^([A-G]#?)(\d+)$/);
-        if (!match) return 60; // デフォルト値
-        
-        const note = match[1];
-        const octave = parseInt(match[2]);
-        const noteIndex = noteNames.indexOf(note);
-        return (octave + 1) * 12 + noteIndex;
-    }
-    
-    // MIDI番号からノート名への変換（簡易版）
-    midiToNote(midi) {
-        const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-        const octave = Math.floor(midi / 12) - 1;
-        const note = noteNames[midi % 12];
-        return { name: note + octave, midi: midi };
-    }
-
+    /**
+     * 楽譜から時系列の演奏ステップを生成
+     * @returns {Array<Object>} steps - 演奏ステップの配列
+     * @returns {number} steps[].ts - ステップ開始時刻(秒)
+     * @returns {number} steps[].virtualMeasure - 論理小節番号(リピート展開後)
+     * @returns {number} steps[].physicalMeasure - 物理小節番号(楽譜上の実際の小節)
+     * @returns {number} steps[].virtualPosition - リピート展開後の線形演奏順序における位置インデックス
+     * @returns {number} steps[].stepDuration - 次ステップまでの継続時間(秒)
+     * @returns {Array<Object>} steps[].notes - 同時演奏音符の配列
+     * @returns {Object} steps[].notes[].note - OSMD音符オブジェクト
+     * @returns {number} steps[].notes[].duration - 音符継続時間(秒)
+     * @returns {number} steps[].notes[].volume - 音量
+     * @returns {number} steps[].notes[].string - 弦番号(1-6)
+     * @returns {number} steps[].notes[].fret - フレット番号
+     * @returns {string} steps[].notes[].fretboardNote - 音名
+     */
     async generateSteps() {
         const { osmd } = this;
         const wholeNoteLength = 60 / this.bpm * 4;
+        
 
         // Initialize virtual cursor that handles repeats
         this.initRepeatedCursor();
@@ -60,23 +57,19 @@ export class MusicStepGenerator {
         // Build step sequence with timing information
         const steps = [];
         let currentTime = 0;
-        let stepIndex = 0;
 
-        this.resetRepeatedCursor();
-        
         // Process each virtual position using nextWithRepeated() wrapper
         while (this.virtualCursorPosition < this.virtualToPhysicalMap.length) {
             const virtualStep = this.getCurrentVirtualStep();
             const cursor = osmd.cursor;
             
-            // Verify cursor position
-            const actualMeasure = cursor.Iterator.currentMeasureIndex;
-            const actualTimestamp = cursor.Iterator.currentTimeStamp.realValue;
+            // Use virtual mapping for consistent measure/timestamp info
+            const actualMeasure = virtualStep.physicalMeasure;
+            const actualTimestamp = virtualStep.physicalTimestamp;
             
             let step = {
                 ts: currentTime,
                 notes: [],
-                stepIndex: stepIndex++,
                 virtualMeasure: virtualStep.virtualMeasure,
                 physicalMeasure: actualMeasure,
                 virtualPosition: this.virtualCursorPosition,
@@ -91,6 +84,8 @@ export class MusicStepGenerator {
 
                     for (let note of entry.Notes) {
                         if (note.isRest()) continue;
+                        
+                        
                         let duration = note.Length.realValue * wholeNoteLength;
                         if (note.NoteTie) {
                             if (note.NoteTie.StartNote === note) {
@@ -111,12 +106,13 @@ export class MusicStepGenerator {
                 }
             }
             
-            // Calculate time based on timestamp difference to next position
-            let stepDuration = 0.25; // Default quarter note length
             
-            // Get current and next timestamps to calculate actual duration
+            // Get current timestamp from virtual position
             const currentTimestamp = actualTimestamp;
-            let nextTimestamp = currentTimestamp + 0.25; // Default
+            // Next timestamps to calculate actual duration
+            let nextTimestamp;
+            // Calculate time based on timestamp difference to next position
+            let stepDuration;
             
             // Look ahead to next virtual position to get real timestamp difference
             if (this.virtualCursorPosition < this.virtualToPhysicalMap.length - 1) {
@@ -133,34 +129,49 @@ export class MusicStepGenerator {
                     // Same measure: use timestamp difference
                     nextTimestamp = nextVirtualStep.physicalTimestamp;
                 } else {
-                    // Different measure: use timestamp to end of current measure
-                    nextTimestamp = Math.floor(currentTimestamp) + 1.0; // Next integer measure
+                    // Different measure: use next step's timestamp directly
+                    nextTimestamp = nextVirtualStep.physicalTimestamp;
                 }
+            } else {
+                // Last step: use maximum note duration from all notes in this step
+                let maxNoteDuration = 0.25; // Default quarter note
+                if (currentVoiceEntries && currentVoiceEntries.length) {
+                    for (let entry of currentVoiceEntries) {
+                        if (!entry.ParentSourceStaffEntry.ParentStaff.isTab) continue;
+                        for (let note of entry.Notes) {
+                            if (note.isRest()) continue;
+                            maxNoteDuration = Math.max(maxNoteDuration, note.Length.realValue);
+                        }
+                    }
+                }
+                stepDuration = maxNoteDuration;
             }
             
-            stepDuration = nextTimestamp - currentTimestamp;
+            // Only calculate from timestamps if not the last step
+            if (this.virtualCursorPosition < this.virtualToPhysicalMap.length - 1) {
+                stepDuration = nextTimestamp - currentTimestamp;
+                
+            }
             
             // Ensure duration is always positive and reasonable
             if (stepDuration <= 0) {
-                console.warn(`Invalid duration ${stepDuration} at step ${stepIndex-1}, using default 0.25`);
+                console.warn(`Invalid duration ${stepDuration} at step ${this.virtualCursorPosition}, using default 0.25`);
                 stepDuration = 0.25;
             }
             
-            // Store the calculated duration in the step
-            step.stepDuration = stepDuration;
+            // Convert stepDuration from OSMD units to seconds
+            const stepDurationInSeconds = stepDuration * wholeNoteLength;
+            step.stepDuration = stepDurationInSeconds;
             
             steps.push(step);
-            console.log(`Step ${stepIndex-1}: virtual=${this.virtualCursorPosition}, measure=${actualMeasure}, timestamp=${actualTimestamp}, notes=${step.notes.length}, duration=${stepDuration}`);
             
             // Move to next position using the wrapper
             const hasNext = this.nextWithRepeated();
             if (!hasNext) break;
             
-            currentTime += stepDuration * wholeNoteLength;
+            currentTime += stepDurationInSeconds;
         }
 
-        console.log('Generated steps with virtual cursor:', steps.length);
-        
         // Reset cursor to beginning for playback
         this.resetRepeatedCursor();
         return steps;
@@ -185,7 +196,7 @@ export class MusicStepGenerator {
         for (let measureInfo of playbackSequence) {
             // Navigate to target measure using relative movement
             while (currentMeasure < measureInfo.measureIndex && !cursor.Iterator.EndReached) {
-                cursor.next();
+                cursor.Iterator.moveToNext();
                 if (cursor.Iterator.currentMeasureIndex > currentMeasure) {
                     currentMeasure = cursor.Iterator.currentMeasureIndex;
                 }
@@ -195,7 +206,7 @@ export class MusicStepGenerator {
             if (cursor.Iterator.currentMeasureIndex !== measureInfo.measureIndex) {
                 cursor.reset();
                 while (!cursor.Iterator.EndReached && cursor.Iterator.currentMeasureIndex < measureInfo.measureIndex) {
-                    cursor.next();
+                    cursor.Iterator.moveToNext();
                 }
                 currentMeasure = cursor.Iterator.currentMeasureIndex;
             }
@@ -206,11 +217,11 @@ export class MusicStepGenerator {
                 this.virtualToPhysicalMap[virtualPosition] = {
                     physicalMeasure: cursor.Iterator.currentMeasureIndex,
                     physicalTimestamp: cursor.Iterator.currentTimeStamp.realValue,
-                    virtualMeasure: measureInfo.measureIndex, // The logical measure in repeat sequence
+                    virtualMeasure: measureInfo.measureIndex, // The logical measure in repeat sequenc
                     virtualPosition: virtualPosition // For debugging
                 };
                 virtualPosition++;
-                cursor.next();
+                cursor.Iterator.moveToNext();
             }
             
             // Update current measure for next iteration
@@ -218,14 +229,9 @@ export class MusicStepGenerator {
                 currentMeasure = cursor.Iterator.currentMeasureIndex;
             }
         }
-        
-        console.log('Virtual cursor map created:', this.virtualToPhysicalMap.length, 'positions');
-        console.log('First few mappings:');
-        for (let i = 0; i < Math.min(15, this.virtualToPhysicalMap.length); i++) {
-            const mapping = this.virtualToPhysicalMap[i];
-            console.log(`  ${i}: virtual=${mapping.virtualMeasure}, physical=${mapping.physicalMeasure}, timestamp=${mapping.physicalTimestamp}`);
-        }
-        
+
+        cursor.update();
+
         // Initialize virtual cursor state
         this.virtualCursorPosition = 0;
         this.resetRepeatedCursor();
@@ -249,33 +255,31 @@ export class MusicStepGenerator {
         const current = this.virtualToPhysicalMap[this.virtualCursorPosition];
         const next = this.virtualToPhysicalMap[this.virtualCursorPosition + 1];
         
-        console.log(`Moving from virtual ${this.virtualCursorPosition} to ${this.virtualCursorPosition + 1}: measure ${current.physicalMeasure}@${current.physicalTimestamp} -> ${next.physicalMeasure}@${next.physicalTimestamp}`);
-        
         // Calculate relative movement needed
         if (next.physicalMeasure === current.physicalMeasure && 
             next.physicalTimestamp > current.physicalTimestamp) {
             // Same measure, forward movement
-            console.log(`  Forward movement within measure ${next.physicalMeasure}`);
-            cursor.next();
-        } else if (next.physicalMeasure === current.physicalMeasure + 1) {
+            cursor.Iterator.moveToNext();
+        } else 
+        if (next.physicalMeasure === current.physicalMeasure + 1) {
             // Next measure
-            console.log(`  Moving to next measure ${next.physicalMeasure}`);
-            cursor.next();
-        } else if (next.physicalMeasure < current.physicalMeasure || 
-                  (next.physicalMeasure === current.physicalMeasure && next.physicalTimestamp < current.physicalTimestamp)) {
+            cursor.Iterator.moveToNext();
+        } else
+        if (
+            next.physicalMeasure < current.physicalMeasure || 
+            (next.physicalMeasure === current.physicalMeasure && next.physicalTimestamp < current.physicalTimestamp)
+        ) {
             // Repeat jump backward (measure or timestamp)
-            console.log(`  Repeat jump: measure ${current.physicalMeasure}@${current.physicalTimestamp} -> ${next.physicalMeasure}@${next.physicalTimestamp}`);
             const measureDiff = current.physicalMeasure - next.physicalMeasure;
             const timestampDiff = current.physicalTimestamp - next.physicalTimestamp;
             
             // Calculate approximate steps to go back
             // Each measure typically has 4 quarter-note positions (0, 0.25, 0.5, 0.75)
             const stepsBack = Math.round(measureDiff * 4 + timestampDiff * 4);
-            console.log(`  Going back ${stepsBack} steps (${measureDiff} measures + ${timestampDiff} timestamp diff)`);
             
             for (let i = 0; i < stepsBack; i++) {
                 if (!cursor.Iterator.FrontReached) {
-                    cursor.previous();
+                    cursor.Iterator.moveToPrevious();
                 } else {
                     console.warn(`  Hit front boundary after ${i} steps`);
                     break;
@@ -290,26 +294,20 @@ export class MusicStepGenerator {
                 
                 if (curMeasure === next.physicalMeasure && 
                     Math.abs(curTimestamp - next.physicalTimestamp) < 0.01) {
-                    console.log(`  Fine-tuned to correct position: ${curMeasure}@${curTimestamp}`);
                     break;
                 } else if (curMeasure < next.physicalMeasure || 
                           (curMeasure === next.physicalMeasure && curTimestamp < next.physicalTimestamp)) {
-                    cursor.next();
+                    cursor.Iterator.moveToNext();
                 } else {
-                    cursor.previous();
+                    cursor.Iterator.moveToPrevious();
                 }
                 iterations++;
             }
         } else {
             // Other cases - fallback to single next()
-            console.log(`  Fallback: single next() movement`);
-            cursor.next();
+            cursor.Iterator.moveToNext();
         }
-        
-        // Verify final position
-        const finalMeasure = cursor.Iterator.currentMeasureIndex;
-        const finalTimestamp = cursor.Iterator.currentTimeStamp.realValue;
-        console.log(`  Final position: ${finalMeasure}@${finalTimestamp} (expected: ${next.physicalMeasure}@${next.physicalTimestamp})`);
+        cursor.update();
         
         this.virtualCursorPosition++;
         return true;
@@ -322,7 +320,7 @@ export class MusicStepGenerator {
         return null;
     }
 
-    async syncCursorToVirtualPosition(targetVirtualPos) {
+    syncCursorToVirtualPosition(targetVirtualPos) {
         if (targetVirtualPos < 0 || targetVirtualPos >= this.virtualToPhysicalMap.length) {
             console.warn(`Invalid virtual position: ${targetVirtualPos}`);
             return;
@@ -355,8 +353,6 @@ export class MusicStepGenerator {
         const { osmd } = this;
         const sheet = osmd.Sheet;
         
-        console.log('Building playback sequence for', sheet.SourceMeasures.length, 'measures');
-        
         // Safety check: limit processing for very large files
         const maxMeasures = 200;
         if (sheet.SourceMeasures.length > maxMeasures) {
@@ -380,24 +376,18 @@ export class MusicStepGenerator {
 
             // Check OSMD's firstRepetitionInstructions and lastRepetitionInstructions
             if (sourceMeasure.firstRepetitionInstructions && sourceMeasure.firstRepetitionInstructions.length > 0) {
-                console.log(`Measure ${i} firstRepetitionInstructions:`, sourceMeasure.firstRepetitionInstructions);
                 for (let instr of sourceMeasure.firstRepetitionInstructions) {
-                    console.log(`  -> type: ${instr.type}, constructor: ${instr.constructor.name}`);
                     if (instr.type === 0) { // Start repeat
                         measureInfo.hasStartRepeat = true;
-                        console.log(`Measure ${i}: start repeat detected`);
                         break;
                     }
                 }
             }
             
             if (sourceMeasure.lastRepetitionInstructions && sourceMeasure.lastRepetitionInstructions.length > 0) {
-                console.log(`Measure ${i} lastRepetitionInstructions:`, sourceMeasure.lastRepetitionInstructions);
                 for (let instr of sourceMeasure.lastRepetitionInstructions) {
-                    console.log(`  -> type: ${instr.type}, constructor: ${instr.constructor.name}`);
                     if (instr.type === 1 || instr.type === 2) { // End repeat
                         measureInfo.hasEndRepeat = true;
-                        console.log(`Measure ${i}: end repeat detected`);
                         break;
                     }
                 }
@@ -418,35 +408,26 @@ export class MusicStepGenerator {
         let i = 0;
         let repeatStack = [];
 
-        console.log('=== Building playback sequence ===');
         while (i < measures.length) {
             const measure = measures[i];
-            console.log(`Processing measure ${i}: start=${measure.hasStartRepeat}, end=${measure.hasEndRepeat}`);
 
             if (measure.hasStartRepeat) {
                 repeatStack.push(i);
-                console.log(`  -> Added start repeat at ${i}, stack:`, repeatStack);
             }
 
             playbackSequence.push(measure);
-            console.log(`  -> Added measure ${i} to sequence`);
 
             if (measure.hasEndRepeat) {
-                console.log(`  -> End repeat found at measure ${i}`);
                 if (repeatStack.length > 0) {
                     const startRepeatIndex = repeatStack.pop();
-                    console.log(`  -> Repeating from ${startRepeatIndex} to ${i}`);
                     // Add the repeated section once
                     for (let j = startRepeatIndex; j <= i; j++) {
                         playbackSequence.push(measures[j]);
-                        console.log(`    -> Added repeated measure ${j}`);
                     }
                 } else {
-                    console.log(`  -> No start repeat, repeating from beginning to ${i}`);
                     // End repeat without start repeat - repeat from beginning
                     for (let j = 0; j <= i; j++) {
                         playbackSequence.push(measures[j]);
-                        console.log(`    -> Added repeated measure ${j}`);
                     }
                 }
             }
@@ -454,7 +435,82 @@ export class MusicStepGenerator {
             i++;
         }
 
-        console.log(`Generated ${playbackSequence.length} measures from ${measures.length} original measures`);
         return playbackSequence;
+    }
+
+    getTimeSignatureForMeasure(measureIndex) {
+        const { osmd } = this;
+        const sheet = osmd.Sheet;
+        
+        // Default to 4/4 if not found
+        let timeSignature = { numerator: 4, denominator: 4 };
+        
+        // Look for time signature in current measure or previous measures
+        for (let i = measureIndex; i >= 0; i--) {
+            if (i < sheet.SourceMeasures.length) {
+                const measure = sheet.SourceMeasures[i];
+                if (measure.ActiveTimeSignature) {
+                    timeSignature = {
+                        numerator: measure.ActiveTimeSignature.Numerator,
+                        denominator: measure.ActiveTimeSignature.Denominator
+                    };
+                    break;
+                }
+            }
+        }
+        
+        return timeSignature;
+    }
+
+    extractBpmFromScore() {
+        const { osmd } = this;
+        const sheet = osmd.Sheet;
+        
+        // 楽譜からテンポ情報を検索
+        if (sheet && sheet.SourceMeasures && sheet.SourceMeasures.length > 0) {
+            // 最初の小節から開始してテンポ情報を探す
+            for (let measureIndex = 0; measureIndex < sheet.SourceMeasures.length; measureIndex++) {
+                const measure = sheet.SourceMeasures[measureIndex];
+                
+                // テンポ表現を確認
+                if (measure.TempoExpressions && measure.TempoExpressions.length > 0) {
+                    for (let tempoExpr of measure.TempoExpressions) {
+                        if (tempoExpr.TempoInBpm) {
+                            console.warn(`Found tempo expression in measure ${measureIndex}: ${tempoExpr.TempoInBpm} BPM`);
+                            return tempoExpr.TempoInBpm;
+                        }
+                    }
+                }
+                
+                // ソースから直接テンポを確認
+                if (measure.FirstInstructionsStaffEntries) {
+                    for (let staffEntry of measure.FirstInstructionsStaffEntries) {
+                        if (staffEntry && staffEntry.Instructions) {
+                            for (let instruction of staffEntry.Instructions) {
+                                if (instruction.TempoInBpm) {
+                                    console.warn(`Found tempo instruction in measure ${measureIndex}: ${instruction.TempoInBpm} BPM`);
+                                    return instruction.TempoInBpm;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // OSMD Sheet のデフォルトテンポを確認
+        if (sheet && sheet.DefaultStartTempoInBpm && sheet.DefaultStartTempoInBpm > 0) {
+            console.warn(`Using default tempo from OSMD Sheet: ${sheet.DefaultStartTempoInBpm} BPM`);
+            return sheet.DefaultStartTempoInBpm;
+        }
+        
+        // OSMD からのテンポ情報を確認
+        if (osmd.Sheet && osmd.Sheet.tempoInBPM && osmd.Sheet.tempoInBPM > 0) {
+            console.warn(`Using tempo from OSMD Sheet: ${osmd.Sheet.tempoInBPM} BPM`);
+            return osmd.Sheet.tempoInBPM;
+        }
+        
+        console.warn('No BPM information found in score, using default:', this.defaultBpm);
+        return null;
     }
 }
