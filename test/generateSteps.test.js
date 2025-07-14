@@ -155,7 +155,10 @@ describe('generateSteps() - Music XML Test Files', () => {
       });
     });
 
-    const defaultOptions = { bpm: 1, fretboardNotes: fretboardNotes };
+    // XMLからtimes属性を解析
+    const repeatTimesInfo = MusicStepGenerator.parseRepeatTimesFromXML(musicXMLContent);
+    
+    const defaultOptions = { bpm: 1, fretboardNotes: fretboardNotes, repeatTimesInfo: repeatTimesInfo };
     return new MusicStepGenerator(osmd, { ...defaultOptions, ...options });
   }
 
@@ -742,6 +745,338 @@ describe('generateSteps() - Music XML Test Files', () => {
       ];
 
       const generator = await setupGenerator('sample-repeat.musicxml');
+      const steps = await generator.generateSteps();
+
+      expect(steps).toBeSameSteps(expectedRepeat);
+    });
+  });
+
+  describe('sample-repeat3.musicxml', () => {
+    it('should generate expected steps with repeat processing', async () => {
+      // 131 BPM: quarter note = 60/131 ≈ 0.4580152671... seconds
+      const quarterNoteTime = 60 / 131;
+
+      // times="3" means total 3 times (initial + 2 repeats)
+      // Structure: Measure 1 + Measure 2 (first play) + Measure 2 (repeat 1) + Measure 2 (repeat 2) + Measure 3 + Measure 4
+      const expectedRepeat = [
+        // First play: Measure 1 (steps 0-3)
+        {
+          "ts": 0,
+          "virtualMeasure": 0,
+          "physicalMeasure": 0,
+          "virtualPosition": 0,
+          "stepDuration": quarterNoteTime,
+          "notes": [
+            {
+              "duration": quarterNoteTime,
+              "volume": 1,
+              "string": 1,
+              "fret": 0,
+              "fretboardNote": "E4"
+            }
+          ]
+        },
+        {
+          "ts": quarterNoteTime,
+          "virtualMeasure": 0,
+          "physicalMeasure": 0,
+          "virtualPosition": 1,
+          "stepDuration": quarterNoteTime,
+          "notes": [
+            {
+              "duration": quarterNoteTime,
+              "volume": 1,
+              "string": 1,
+              "fret": 1,
+              "fretboardNote": "F4"
+            }
+          ]
+        },
+        {
+          "ts": quarterNoteTime * 2,
+          "virtualMeasure": 0,
+          "physicalMeasure": 0,
+          "virtualPosition": 2,
+          "stepDuration": quarterNoteTime,
+          "notes": [
+            {
+              "duration": quarterNoteTime,
+              "volume": 1,
+              "string": 1,
+              "fret": 3,
+              "fretboardNote": "G4"
+            }
+          ]
+        },
+        {
+          "ts": quarterNoteTime * 3,
+          "virtualMeasure": 0,
+          "physicalMeasure": 0,
+          "virtualPosition": 3,
+          "stepDuration": quarterNoteTime,
+          "notes": [
+            {
+              "duration": quarterNoteTime,
+              "volume": 1,
+              "string": 1,
+              "fret": 5,
+              "fretboardNote": "A4"
+            }
+          ]
+        },
+        
+        // First play: Measure 2 (steps 4-7)
+        {
+          "ts": quarterNoteTime * 4,
+          "virtualMeasure": 1,
+          "physicalMeasure": 1,
+          "virtualPosition": 4,
+          "stepDuration": quarterNoteTime,
+          "notes": [
+            {
+              "duration": quarterNoteTime,
+              "volume": 1,
+              "string": 2,
+              "fret": 0,
+              "fretboardNote": "B3"
+            }
+          ]
+        },
+        {
+          "ts": quarterNoteTime * 5,
+          "virtualMeasure": 1,
+          "physicalMeasure": 1,
+          "virtualPosition": 5,
+          "stepDuration": quarterNoteTime,
+          "notes": [
+            {
+              "duration": quarterNoteTime,
+              "volume": 1,
+              "string": 2,
+              "fret": 1,
+              "fretboardNote": "C4"
+            }
+          ]
+        },
+        {
+          "ts": quarterNoteTime * 6,
+          "virtualMeasure": 1,
+          "physicalMeasure": 1,
+          "virtualPosition": 6,
+          "stepDuration": quarterNoteTime,
+          "notes": [
+            {
+              "duration": quarterNoteTime,
+              "volume": 1,
+              "string": 2,
+              "fret": 3,
+              "fretboardNote": "D4"
+            }
+          ]
+        },
+        {
+          "ts": quarterNoteTime * 7,
+          "virtualMeasure": 1,
+          "physicalMeasure": 1,
+          "virtualPosition": 7,
+          "stepDuration": quarterNoteTime,
+          "notes": [
+            {
+              "duration": quarterNoteTime,
+              "volume": 1,
+              "string": 2,
+              "fret": 5,
+              "fretboardNote": "E4"
+            }
+          ]
+        },
+
+        // Repeat 1: Measure 2 (steps 8-11)
+        {
+          "ts": quarterNoteTime * 8,
+          "virtualMeasure": 1,
+          "physicalMeasure": 1,
+          "virtualPosition": 8,
+          "stepDuration": quarterNoteTime,
+          "notes": [
+            {
+              "duration": quarterNoteTime,
+              "volume": 1,
+              "string": 2,
+              "fret": 0,
+              "fretboardNote": "B3"
+            }
+          ]
+        },
+        {
+          "ts": quarterNoteTime * 9,
+          "virtualMeasure": 1,
+          "physicalMeasure": 1,
+          "virtualPosition": 9,
+          "stepDuration": quarterNoteTime,
+          "notes": [
+            {
+              "duration": quarterNoteTime,
+              "volume": 1,
+              "string": 2,
+              "fret": 1,
+              "fretboardNote": "C4"
+            }
+          ]
+        },
+        {
+          "ts": quarterNoteTime * 10,
+          "virtualMeasure": 1,
+          "physicalMeasure": 1,
+          "virtualPosition": 10,
+          "stepDuration": quarterNoteTime,
+          "notes": [
+            {
+              "duration": quarterNoteTime,
+              "volume": 1,
+              "string": 2,
+              "fret": 3,
+              "fretboardNote": "D4"
+            }
+          ]
+        },
+        {
+          "ts": quarterNoteTime * 11,
+          "virtualMeasure": 1,
+          "physicalMeasure": 1,
+          "virtualPosition": 11,
+          "stepDuration": quarterNoteTime,
+          "notes": [
+            {
+              "duration": quarterNoteTime,
+              "volume": 1,
+              "string": 2,
+              "fret": 5,
+              "fretboardNote": "E4"
+            }
+          ]
+        },
+
+        // Repeat 2: Measure 2 (steps 12-15)
+        {
+          "ts": quarterNoteTime * 12,
+          "virtualMeasure": 1,
+          "physicalMeasure": 1,
+          "virtualPosition": 12,
+          "stepDuration": quarterNoteTime,
+          "notes": [
+            {
+              "duration": quarterNoteTime,
+              "volume": 1,
+              "string": 2,
+              "fret": 0,
+              "fretboardNote": "B3"
+            }
+          ]
+        },
+        {
+          "ts": quarterNoteTime * 13,
+          "virtualMeasure": 1,
+          "physicalMeasure": 1,
+          "virtualPosition": 13,
+          "stepDuration": quarterNoteTime,
+          "notes": [
+            {
+              "duration": quarterNoteTime,
+              "volume": 1,
+              "string": 2,
+              "fret": 1,
+              "fretboardNote": "C4"
+            }
+          ]
+        },
+        {
+          "ts": quarterNoteTime * 14,
+          "virtualMeasure": 1,
+          "physicalMeasure": 1,
+          "virtualPosition": 14,
+          "stepDuration": quarterNoteTime,
+          "notes": [
+            {
+              "duration": quarterNoteTime,
+              "volume": 1,
+              "string": 2,
+              "fret": 3,
+              "fretboardNote": "D4"
+            }
+          ]
+        },
+        {
+          "ts": quarterNoteTime * 15,
+          "virtualMeasure": 1,
+          "physicalMeasure": 1,
+          "virtualPosition": 15,
+          "stepDuration": quarterNoteTime,
+          "notes": [
+            {
+              "duration": quarterNoteTime,
+              "volume": 1,
+              "string": 2,
+              "fret": 5,
+              "fretboardNote": "E4"
+            }
+          ]
+        },
+
+        // After repeats: Measure 3 (steps 16-17)
+        {
+          "ts": quarterNoteTime * 16,
+          "virtualMeasure": 2,
+          "physicalMeasure": 2,
+          "virtualPosition": 16,
+          "stepDuration": quarterNoteTime * 2, // 半音符（秒）
+          "notes": [
+            {
+              "duration": quarterNoteTime * 2, // 半音符（秒）
+              "volume": 1,
+              "string": 3,
+              "fret": 0,
+              "fretboardNote": "G3"
+            }
+          ]
+        },
+        {
+          "ts": quarterNoteTime * 18,
+          "virtualMeasure": 2,
+          "physicalMeasure": 2,
+          "virtualPosition": 17,
+          "stepDuration": quarterNoteTime * 2,
+          "notes": [
+            {
+              "duration": quarterNoteTime * 2,
+              "volume": 1,
+              "string": 3,
+              "fret": 5,
+              "fretboardNote": "C4"
+            }
+          ]
+        },
+        
+        // Measure 4 (step 18)
+        {
+          "ts": quarterNoteTime * 20,
+          "virtualMeasure": 3,
+          "physicalMeasure": 3,
+          "virtualPosition": 18,
+          "stepDuration": quarterNoteTime * 4,
+          "notes": [
+            {
+              "duration": quarterNoteTime * 4,
+              "volume": 1,
+              "string": 3,
+              "fret": 5,
+              "fretboardNote": "C4",
+            }
+          ]
+        }
+      ];
+
+      const generator = await setupGenerator('sample-repeat3.musicxml');
       const steps = await generator.generateSteps();
 
       expect(steps).toBeSameSteps(expectedRepeat);

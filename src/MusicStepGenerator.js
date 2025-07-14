@@ -28,6 +28,9 @@ export class MusicStepGenerator {
         // リピート処理用の状態変数
         this.virtualToPhysicalMap = null;
         this.virtualCursorPosition = 0;
+        
+        // リピート情報の事前解析結果を保存
+        this.repeatTimesInfo = options.repeatTimesInfo || {};
     }
     
     /**
@@ -352,7 +355,8 @@ export class MusicStepGenerator {
                 measureNumber: sourceMeasure.MeasureNumber,
                 hasStartRepeat: false,
                 hasEndRepeat: false,
-                endingsCount: 2  // Default: play once + repeat once = 2 total times
+                endingsCount: 2,  // Default: play once + repeat once = 2 total times
+                repeatTimes: this.repeatTimesInfo[i] || 2  // Use XML times or default to 2 (total times)
             };
 
             // Check OSMD's firstRepetitionInstructions and lastRepetitionInstructions
@@ -401,14 +405,30 @@ export class MusicStepGenerator {
             if (measure.hasEndRepeat) {
                 if (repeatStack.length > 0) {
                     const startRepeatIndex = repeatStack.pop();
-                    // Add the repeated section once
-                    for (let j = startRepeatIndex; j <= i; j++) {
-                        playbackSequence.push(measures[j]);
+                    // times属性を確認（デフォルト2回total、つまり1回リピート）
+                    let totalTimes = 2;
+                    if (this.repeatTimesInfo[i]) {
+                        totalTimes = this.repeatTimesInfo[i];
+                    }
+                    
+                    // Add the repeated section according to times attribute
+                    // times="3" means total 3 times = initial + 2 repeats
+                    for (let repeat = 0; repeat < totalTimes - 1; repeat++) {
+                        for (let j = startRepeatIndex; j <= i; j++) {
+                            playbackSequence.push(measures[j]);
+                        }
                     }
                 } else {
                     // End repeat without start repeat - repeat from beginning
-                    for (let j = 0; j <= i; j++) {
-                        playbackSequence.push(measures[j]);
+                    let totalTimes = 2;
+                    if (this.repeatTimesInfo[i]) {
+                        totalTimes = this.repeatTimesInfo[i];
+                    }
+                    
+                    for (let repeat = 0; repeat < totalTimes - 1; repeat++) {
+                        for (let j = 0; j <= i; j++) {
+                            playbackSequence.push(measures[j]);
+                        }
                     }
                 }
             }
@@ -493,5 +513,58 @@ export class MusicStepGenerator {
         
         console.warn('No BPM information found in score, using default:', this.defaultBpm);
         return null;
+    }
+    
+    /**
+     * MusicXMLからtimes属性を解析してリピート情報を取得
+     * @param {string} musicXmlString - MusicXML文字列
+     * @returns {Object} repeatTimesInfo - { measureIndex: repeatTimes } の形式
+     */
+    static parseRepeatTimesFromXML(musicXmlString) {
+        const repeatTimesInfo = {};
+        
+        try {
+            // DOMParserを使用してXMLを解析
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(musicXmlString, 'text/xml');
+            
+            // パースエラーをチェック
+            const parseError = xmlDoc.getElementsByTagName('parsererror')[0];
+            if (parseError) {
+                console.warn('XML parse error:', parseError.textContent);
+                return repeatTimesInfo;
+            }
+            
+            // 全てのmeasure要素を取得
+            const measures = xmlDoc.querySelectorAll('measure');
+            
+            measures.forEach((measure, index) => {
+                // measure内のbarline要素を確認
+                const barlines = measure.querySelectorAll('barline');
+                
+                barlines.forEach(barline => {
+                    // repeat要素を確認
+                    const repeatElement = barline.querySelector('repeat');
+                    if (repeatElement) {
+                        const direction = repeatElement.getAttribute('direction');
+                        const times = repeatElement.getAttribute('times');
+                        
+                        // backward direction（終了リピート）でtimes属性がある場合
+                        if (direction === 'backward' && times) {
+                            const repeatTimes = parseInt(times, 10);
+                            if (!isNaN(repeatTimes) && repeatTimes > 0) {
+                                repeatTimesInfo[index] = repeatTimes;
+                                console.log(`Found repeat times=${repeatTimes} at measure ${index + 1}`);
+                            }
+                        }
+                    }
+                });
+            });
+            
+        } catch (error) {
+            console.error('Error parsing XML for repeat times:', error);
+        }
+        
+        return repeatTimesInfo;
     }
 }

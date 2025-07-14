@@ -343,8 +343,21 @@ Vue.createApp({
 			cursor.show();
 
 			this.addUserLog('Initializing step generator...', 'progress');
+			
+			// XMLからtimes属性を解析
+			let repeatTimesInfo = {};
+			if (typeof url === 'string' && url.trim().startsWith('<?xml')) {
+				// XMLコンテンツから直接解析
+				repeatTimesInfo = MusicStepGenerator.parseRepeatTimesFromXML(url);
+			} else {
+				// ファイルパスの場合は、後でOSMDから取得を試みる
+				// 現在の実装では楽譜データに直接アクセスできないため、デフォルト値を使用
+				this.addUserLog('File path detected, using default repeat behavior', 'info');
+			}
+			
 			this.stepGenerator = new MusicStepGenerator(osmd, {
 				fretboardNotes: this.fretboardNotes,
+				repeatTimesInfo: repeatTimesInfo,
 			});
 
 			this.addUserLog('Initializing fretboard display...', 'progress');
