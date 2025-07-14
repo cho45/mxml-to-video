@@ -270,41 +270,22 @@ export class MusicStepGenerator {
             (next.physicalMeasure === current.physicalMeasure && next.physicalTimestamp < current.physicalTimestamp)
         ) {
             // Repeat jump backward (measure or timestamp)
-            const measureDiff = current.physicalMeasure - next.physicalMeasure;
-            const timestampDiff = current.physicalTimestamp - next.physicalTimestamp;
+            // Simple approach: move back until we reach target position
             
-            // Calculate approximate steps to go back
-            // Each measure typically has 4 quarter-note positions (0, 0.25, 0.5, 0.75)
-            const stepsBack = Math.round(measureDiff * 4 + timestampDiff * 4);
-            
-            for (let i = 0; i < stepsBack; i++) {
+            while (cursor.Iterator.currentMeasureIndex > next.physicalMeasure || 
+                   (cursor.Iterator.currentMeasureIndex === next.physicalMeasure && 
+                    cursor.Iterator.currentTimeStamp.realValue > next.physicalTimestamp)) {
+                
                 if (!cursor.Iterator.FrontReached) {
                     cursor.Iterator.moveToPrevious();
                 } else {
-                    console.warn(`  Hit front boundary after ${i} steps`);
+                    console.warn("Hit front boundary during repeat jump");
                     break;
                 }
-            }
-            
-            // Fine-tune position if needed
-            let iterations = 0;
-            while (iterations < 10 && !cursor.Iterator.EndReached) {
-                const curMeasure = cursor.Iterator.currentMeasureIndex;
-                const curTimestamp = cursor.Iterator.currentTimeStamp.realValue;
-                
-                if (curMeasure === next.physicalMeasure && 
-                    Math.abs(curTimestamp - next.physicalTimestamp) < 0.01) {
-                    break;
-                } else if (curMeasure < next.physicalMeasure || 
-                          (curMeasure === next.physicalMeasure && curTimestamp < next.physicalTimestamp)) {
-                    cursor.Iterator.moveToNext();
-                } else {
-                    cursor.Iterator.moveToPrevious();
-                }
-                iterations++;
             }
         } else {
             // Other cases - fallback to single next()
+            console.warn("unexpected cursor movement, using next()");
             cursor.Iterator.moveToNext();
         }
         cursor.update();
