@@ -300,7 +300,29 @@ Vue.createApp({
 			this.addUserLog('Initializing music score renderer...', 'progress');
 			
 			await timeout(10);
-			const osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay(this.$refs.osmdContainer);
+			
+			// XMLからtimes属性を解析するための変数
+			let repeatTimesInfo = {};
+			
+			// OSMD初期化オプション
+			const osmdOptions = {};
+			
+			// XMLコンテンツから直接解析する場合
+			if (typeof url === 'string' && url.trim().startsWith('<?xml')) {
+				repeatTimesInfo = MusicStepGenerator.parseRepeatTimesFromXML(url);
+				this.addUserLog('Extracted repeat times from XML content', 'info');
+			} else {
+				// ファイルパスの場合は、onXMLReadコールバックでXMLをキャプチャ
+				osmdOptions.onXMLRead = (xmlString) => {
+					// XMLコンテンツからtimes属性を解析
+					repeatTimesInfo = MusicStepGenerator.parseRepeatTimesFromXML(xmlString);
+					this.addUserLog('Extracted repeat times from loaded XML file', 'info');
+					// 元のXMLを返す（変更なし）
+					return xmlString;
+				};
+			}
+			
+			const osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay(this.$refs.osmdContainer, osmdOptions);
 			this.osmd = osmd;
 			
 			this.addUserLog('Loading and parsing score data...', 'progress');
@@ -343,17 +365,6 @@ Vue.createApp({
 			cursor.show();
 
 			this.addUserLog('Initializing step generator...', 'progress');
-			
-			// XMLからtimes属性を解析
-			let repeatTimesInfo = {};
-			if (typeof url === 'string' && url.trim().startsWith('<?xml')) {
-				// XMLコンテンツから直接解析
-				repeatTimesInfo = MusicStepGenerator.parseRepeatTimesFromXML(url);
-			} else {
-				// ファイルパスの場合は、後でOSMDから取得を試みる
-				// 現在の実装では楽譜データに直接アクセスできないため、デフォルト値を使用
-				this.addUserLog('File path detected, using default repeat behavior', 'info');
-			}
 			
 			this.stepGenerator = new MusicStepGenerator(osmd, {
 				fretboardNotes: this.fretboardNotes,
